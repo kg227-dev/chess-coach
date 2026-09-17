@@ -6,7 +6,33 @@
 
 const L = window.CoachLogic;
 const ENGINE_URL = 'vendor/stockfish.js';
-const GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
+const GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };  // fallback only
+const PIECES_URL = 'pieces.svg';
+
+// Cburnett piece set, inlined once so every board piece is a <use> reference.
+async function loadPieces() {
+  try {
+    const svg = await (await fetch(PIECES_URL)).text();
+    const host = document.createElement('div');
+    host.id = 'piece-sprite';
+    host.setAttribute('aria-hidden', 'true');
+    host.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
+    host.innerHTML = svg;
+    document.body.appendChild(host);
+    return true;
+  } catch (e) {
+    console.warn('[pieces] sprite unavailable, falling back to text glyphs:', e.message);
+    return false;
+  }
+}
+
+let spriteReady = false;
+
+function pieceMarkup(color, type, cls) {
+  const klass = cls || 'piece';
+  if (!spriteReady) return `<span class="${klass} txt ${color}">${GLYPH[type]}</span>`;
+  return `<svg class="${klass}" viewBox="0 0 40 40" aria-hidden="true"><use href="#${color}${type}"></use></svg>`;
+}
 const STORE_KEY = 'chesscoach.games.v1';
 const PUZZLE_KEY = 'chesscoach.puzzles.v1';
 const BOOK = window.CoachBook;
@@ -252,12 +278,7 @@ function render() {
       el.querySelectorAll('.piece, .dot, .ring').forEach((n) => n.remove());
       el.classList.remove('hl', 'sel', 'check');
       const p = board[r][f];
-      if (p) {
-        const span = document.createElement('span');
-        span.className = 'piece ' + p.color;
-        span.textContent = GLYPH[p.type];
-        el.appendChild(span);
-      }
+      if (p) el.insertAdjacentHTML('beforeend', pieceMarkup(p.color, p.type));
     }
   }
 
@@ -293,7 +314,8 @@ function playerStrip(name, color, captured, diff) {
   const oppClass = color === 'w' ? 'b' : 'w';
   const glyphs = ['p', 'n', 'b', 'r', 'q']
     .filter((t) => counts[t])
-    .map((t) => `<span class="taken ${oppClass}">${GLYPH[t].repeat(counts[t])}</span>`)
+    .map((t) => `<span class="takengroup">${
+      Array.from({ length: counts[t] }, () => pieceMarkup(oppClass, t, 'taken')).join('')}</span>`)
     .join('');
   return `
     <div class="pavatar ${color}">${GLYPH.p}</div>
@@ -344,6 +366,30 @@ function drawArrows(list) {
 
 const clearArrows = () => { arrowsEl.innerHTML = ''; };
 
+// Slide the piece from where it came instead of teleporting it. Runs after the
+// board has been repainted, so it never fights the render.
+const REDUCED_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function animateMove(from, to) {
+  if (REDUCED_MOTION || !from || !to) return;
+  const fromEl = squareEls[from], toEl = squareEls[to];
+  if (!fromEl || !toEl) return;
+  const piece = toEl.querySelector('.piece');
+  if (!piece) return;
+  const dx = fromEl.offsetLeft - toEl.offsetLeft;
+  const dy = fromEl.offsetTop - toEl.offsetTop;
+  if (!dx && !dy) return;
+  piece.style.transition = 'none';
+  piece.style.transform = `translate(${dx}px, ${dy}px)`;
+  // Two frames, not a forced reflow: getBoundingClientRect() does NOT flush a
+  // style recalc on an SVG element, so both writes coalesce and nothing moves.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    piece.style.transition = 'transform 170ms cubic-bezier(.22,.61,.36,1)';
+    piece.style.transform = 'translate(0, 0)';
+    setTimeout(() => { piece.style.transition = ''; piece.style.transform = ''; }, 240);
+  }));
+}
+
 /* ==========================================================================
    Input
    ========================================================================== */
@@ -378,6 +424,7 @@ function tryMove(from, to) {
 
 boardEl.addEventListener('pointerdown', (e) => {
   if (!myTurn()) return;
+  S.draggedMove = false;
   const el = e.target.closest('.sq');
   if (!el) return;
   const sq = el.dataset.sq;
@@ -393,7 +440,6 @@ boardEl.addEventListener('pointerdown', (e) => {
   if (!pieceEl) return;
   const ghost = pieceEl.cloneNode(true);
   ghost.classList.add('floating');
-  ghost.style.fontSize = `calc(${getComputedStyle(document.documentElement).getPropertyValue('--sq')} * 0.82)`;
   ghost.style.display = 'none';
   document.body.appendChild(ghost);
   S.drag = { from: sq, ghost, moved: false, pieceEl };
@@ -417,6 +463,7 @@ boardEl.addEventListener('pointerup', (e) => {
   d.ghost.remove();
   d.pieceEl.style.opacity = '';
   if (!d.moved) return;
+  S.draggedMove = true;
   const target = document.elementFromPoint(e.clientX, e.clientY);
   const el = target && target.closest ? target.closest('.sq') : null;
   if (!el || el.dataset.sq === d.from) return;
@@ -435,7 +482,7 @@ function showPromo() {
   el.innerHTML = '';
   ['q', 'r', 'b', 'n'].forEach((t) => {
     const b = document.createElement('button');
-    b.textContent = GLYPH[t];
+    b.innerHTML = pieceMarkup(S.me, t, 'promopiece');
     b.onclick = () => {
       el.hidden = true;
       const pm = S.pendingPromo; S.pendingPromo = null;
@@ -524,6 +571,8 @@ async function playUserMove(move) {
   S.lastMove = { from: mv.from, to: mv.to };
   clearSelection();
   render();
+  if (!S.draggedMove) animateMove(mv.from, mv.to);
+  S.draggedMove = false;
   renderMoves();
 
   // Opening theory isn't graded. The engine preferring one normal book move
@@ -699,6 +748,7 @@ async function botMove() {
   const mv = S.chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || 'q' });
   if (mv) S.lastMove = { from: mv.from, to: mv.to };
   render();
+  if (mv) animateMove(mv.from, mv.to);
   renderMoves();
   if (S.chess.game_over()) return endGame();
   await beginUserTurn();
@@ -915,7 +965,10 @@ async function playPuzzleMove({ from, to, promotion }) {
   S.locked = true;
   S.lastMove = { from: mv.from, to: mv.to };
   clearSelection();
-  render(); renderMoves();
+  render();
+  if (!S.draggedMove) animateMove(mv.from, mv.to);
+  S.draggedMove = false;
+  renderMoves();
   setStatus('Checking…');
 
   const before = await analyse(fenBefore, { multipv: 4 });
@@ -954,7 +1007,9 @@ async function playPuzzleMove({ from, to, promotion }) {
     }
   }
   if (replied) S.lastMove = { from: replied.from, to: replied.to };
-  render(); renderMoves();
+  render();
+  if (replied) animateMove(replied.from, replied.to);
+  renderMoves();
   if (S.chess.game_over()) return showPuzzleResult(true, mv, res, fenBefore);
   S.locked = false;
   setStatus(`Your move — ${S.puzzle.movesLeft} to go.`);
@@ -1105,6 +1160,49 @@ function weaknessHTML() {
     <p class="wfoot">From ${rep.gamesWithData} game${rep.gamesWithData === 1 ? '' : 's'} with move-by-move data · ${rep.total.moves} graded moves.</p>`;
 }
 
+/* ==========================================================================
+   Backup — export / import
+   ========================================================================== */
+
+function currentData() {
+  return { games: loadGames(), puzzles: loadPuzzles(), settings: CFG };
+}
+
+function exportData() {
+  const payload = L.makeExport(loadGames(), loadPuzzles(), CFG);
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const stamp = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `chess-coach-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return payload;
+}
+
+function applyImport(text) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    throw new Error("That file isn't valid JSON — pick the .json file Export produced.");
+  }
+  L.validateExport(data);                  // throws with a readable reason
+  const merged = L.mergeData(currentData(), data);
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(merged.games));
+    localStorage.setItem(PUZZLE_KEY, JSON.stringify(merged.puzzles));
+    Object.assign(CFG, merged.settings);
+    saveSettings();
+  } catch (e) {
+    throw new Error('Could not save — browser storage is full or disabled.');
+  }
+  return merged;
+}
+
 function renderProgress() {
   const games = loadGames();
   const pane = $('pane-progress');
@@ -1162,9 +1260,22 @@ function renderSettings() {
     </div>`;
   }).join('') + `
     <div class="setrow">
-      <div class="setlabel">Reset saved games<span class="setnote">Clears your accuracy history.</span></div>
+      <div class="setlabel">Reset saved games<span class="setnote">Clears your accuracy history. Puzzles are kept.</span></div>
       <button class="btn" id="resetStats">Clear</button>
-    </div>`;
+    </div>
+    <p class="ptitle" style="margin-top:16px">Backup</p>
+    <p class="setnote" style="margin:0 0 8px">Everything lives in this browser only — a different device, or clearing
+       site data, starts from scratch. Export to move your history or keep a copy.</p>
+    <div class="setrow">
+      <div class="setlabel">Export everything<span class="setnote">Games, puzzles and settings as one JSON file.</span></div>
+      <button class="btn" id="exportData">Export</button>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">Import a backup<span class="setnote">Merges with what is already here; nothing is overwritten.</span></div>
+      <button class="btn" id="importData">Import</button>
+    </div>
+    <input type="file" id="importFile" accept="application/json,.json" hidden>
+    <p class="setnote" id="backupNote"></p>`;
 
   pane.querySelectorAll('[data-key]').forEach((input) => {
     input.onchange = () => {
@@ -1180,6 +1291,34 @@ function renderSettings() {
     if (!confirm('Delete all saved game history?')) return;
     try { localStorage.removeItem(STORE_KEY); } catch (e) { /* ignore */ }
     renderProgress();
+  };
+
+  $('exportData').onclick = () => {
+    const p = exportData();
+    $('backupNote').textContent =
+      `Saved ${p.games.length} game${p.games.length === 1 ? '' : 's'} and ${p.puzzles.length} puzzle${p.puzzles.length === 1 ? '' : 's'}.`;
+    $('backupNote').className = 'setnote ok';
+  };
+
+  $('importData').onclick = () => $('importFile').click();
+  $('importFile').onchange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const note = $('backupNote');
+    try {
+      const merged = applyImport(await file.text());
+      renderProgress();
+      renderPuzzles();
+      renderSettings();                 // rebuilds the pane, so write the note after
+      const fresh = $('backupNote');
+      fresh.textContent = `Merged — now ${merged.games.length} games and ${merged.puzzles.length} puzzles `
+        + `(${merged.addedGames} and ${merged.addedPuzzles} new).`;
+      fresh.className = 'setnote ok';
+    } catch (err) {
+      note.textContent = err.message;
+      note.className = 'setnote bad';
+    }
+    e.target.value = '';                 // let the same file be picked again
   };
 }
 
@@ -1255,6 +1394,7 @@ function showBootError(err) {
 }
 
 (async function boot() {
+  spriteReady = await loadPieces();
   buildBoard();
   render();
   try {

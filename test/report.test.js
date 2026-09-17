@@ -220,3 +220,91 @@ describe('explainMove reports the hung piece', () => {
     assert.equal(r.hung, null);
   });
 });
+
+describe('export / import', () => {
+  const games = [{ date: 1000, accuracy: 70 }, { date: 2000, accuracy: 80 }];
+  const puzzles = [{ id: 'a', fenMistake: 'FEN_A', created: 1, solves: 1, due: 500 }];
+
+  test('makeExport stamps the payload', () => {
+    const e = L.makeExport(games, puzzles, { depth: 12 });
+    assert.equal(e.app, 'chess-coach');
+    assert.equal(e.version, 1);
+    assert.deepEqual(e.games, games);
+    assert.ok(e.exported > 0);
+  });
+
+  test('validateExport accepts our own payload', () => {
+    assert.equal(L.validateExport(L.makeExport(games, puzzles, {})), true);
+  });
+
+  test('validateExport rejects junk with a readable reason', () => {
+    assert.throws(() => L.validateExport(null), /not Chess Coach data/);
+    assert.throws(() => L.validateExport({ app: 'something-else' }), /different app/);
+    assert.throws(() => L.validateExport({ app: 'chess-coach', games: 'nope' }), /missing its games/);
+    assert.throws(() => L.validateExport({ app: 'chess-coach', version: 99, games: [], puzzles: [] }), /newer version/);
+  });
+
+  test('merging combines two devices without losing games', () => {
+    const a = { games: [{ date: 1 }, { date: 2 }], puzzles: [], settings: {} };
+    const b = { games: [{ date: 2 }, { date: 3 }], puzzles: [], settings: {} };
+    const m = L.mergeData(a, b);
+    assert.deepEqual(m.games.map((g) => g.date), [1, 2, 3]);
+    assert.equal(m.addedGames, 1);
+  });
+
+  test('a game finished at the same moment is not duplicated', () => {
+    const m = L.mergeData({ games: [{ date: 5, accuracy: 1 }] }, { games: [{ date: 5, accuracy: 2 }] });
+    assert.equal(m.games.length, 1);
+  });
+
+  test('puzzles merge on the mistake position, keeping the further-along copy', () => {
+    const a = { puzzles: [{ fenMistake: 'X', solves: 1, due: 100, created: 1 }] };
+    const b = { puzzles: [{ fenMistake: 'X', solves: 4, due: 900, created: 1 }] };
+    const m = L.mergeData(a, b);
+    assert.equal(m.puzzles.length, 1);
+    assert.equal(m.puzzles[0].solves, 4, 'should keep the copy with more solves');
+  });
+
+  test('equal solves breaks the tie on the later review date', () => {
+    const m = L.mergeData(
+      { puzzles: [{ fenMistake: 'X', solves: 2, due: 100, created: 1 }] },
+      { puzzles: [{ fenMistake: 'X', solves: 2, due: 900, created: 1 }] });
+    assert.equal(m.puzzles[0].due, 900);
+  });
+
+  test('incoming settings win', () => {
+    const m = L.mergeData({ settings: { depth: 12, timeMin: 10 } }, { settings: { depth: 16 } });
+    assert.equal(m.settings.depth, 16);
+    assert.equal(m.settings.timeMin, 10, 'settings not in the backup are kept');
+  });
+
+  test('caps are respected after a merge', () => {
+    const many = Array.from({ length: 140 }, (_, i) => ({ date: i + 1 }));
+    const m = L.mergeData({ games: [] }, { games: many });
+    assert.equal(m.games.length, 100);
+    assert.equal(m.games[0].date, 41, 'keeps the most recent 100');
+  });
+
+  test('merging an empty backup changes nothing', () => {
+    const cur = { games, puzzles, settings: { depth: 12 } };
+    const m = L.mergeData(cur, { games: [], puzzles: [], settings: {} });
+    assert.equal(m.games.length, 2);
+    assert.equal(m.puzzles.length, 1);
+    assert.equal(m.addedGames, 0);
+  });
+
+  test('a round trip through export and merge is lossless', () => {
+    const exported = L.makeExport(games, puzzles, { depth: 14 });
+    const revived = JSON.parse(JSON.stringify(exported));
+    L.validateExport(revived);
+    const m = L.mergeData({ games: [], puzzles: [], settings: {} }, revived);
+    assert.deepEqual(m.games, games);
+    assert.deepEqual(m.puzzles, puzzles);
+    assert.equal(m.settings.depth, 14);
+  });
+
+  test('handles missing fields without throwing', () => {
+    assert.doesNotThrow(() => L.mergeData(null, null));
+    assert.doesNotThrow(() => L.mergeData({}, { puzzles: [{}, null] }));
+  });
+});

@@ -49,8 +49,8 @@ Safe-area insets are handled, so nothing hides under the notch or home indicator
 cd /Users/kushgulati/Desktop/chess-coach && npm test
 ```
 
-150 unit tests covering scoring, board geometry, the opening book, game
-phases, spaced repetition and the weakness aggregation.
+162 unit tests covering scoring, board geometry, the opening book, game
+phases, spaced repetition, the weakness aggregation and backup merging.
 
 ## What it does
 
@@ -87,6 +87,9 @@ phases, spaced repetition and the weakness aggregation.
 - **Spaced repetition** — solved puzzles come back after 1, 3, 7, 15, 33 days and
   retire after two months; a miss resets them to ten minutes.
 - **Progress tab** — bar chart of your last 20 games, average and best accuracy.
+- **Export / import** in Settings — one JSON file with games, puzzles and
+  settings. Importing *merges* rather than replaces, so pulling a backup onto a
+  second device combines the two histories instead of discarding one.
 - Eval bar, move list with colour-coded quality tags, legal-move dots, check
   highlighting, drag-or-click movement, promotion picker, board flip, resign.
 
@@ -118,9 +121,10 @@ rather than being given a made-up one.
 | `logic.js` | All scoring/geometry maths — pure, no DOM, unit tested |
 | `app.js` | Engine worker, game flow, board UI, panels |
 | `book.js` | Opening book (64 lines) |
+| `pieces.svg` | Cburnett piece sprite (CC BY-SA 3.0) |
 | `test/logic.test.js` | 106 tests |
 | `test/book.test.js` | 15 tests |
-| `test/report.test.js` | 29 tests |
+| `test/report.test.js` | 41 tests |
 | `manifest.webmanifest`, `icons/` | Add-to-Home-Screen metadata and icons |
 | `serve.py` | No-cache dev server |
 | `artifact.html` | Entry point for the published version |
@@ -148,6 +152,23 @@ python3 serve.py 8789 --csp-noworker   # workers blocked — shows the error pan
 If workers are blocked the app now fails in about a second with an explanation
 and a retry button, rather than spinning forever.
 
+## Where your data lives
+
+In this browser's `localStorage` under three keys — `chesscoach.games.v1`,
+`chesscoach.puzzles.v1` and `chesscoach.settings.v1`. Nothing is sent anywhere
+and there is no account.
+
+That means it is **per browser, per device, per origin**: your phone and your
+laptop keep separate histories, and the live site's data is separate from
+`localhost`. Safari can also evict it if you don't open the site for a week.
+Use **Settings → Export** for a copy, and **Import** to merge it somewhere else.
+
+## Credits
+
+Piece graphics are the Cburnett set from Wikimedia Commons, used under
+[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/); the licence and
+author list are preserved in `pieces.svg`.
+
 ## Known gaps
 
 - The book stops at ~10 plies, so long theoretical lines leave book early.
@@ -155,3 +176,4 @@ and a retry button, rather than spinning forever.
 - The weakness report splits by phase but not by theme (pins, forks, back rank).
 - No offline service worker yet: the home-screen app still needs a connection on
   first load of each session.
+- No cross-device sync. Export/import covers moving data by hand.

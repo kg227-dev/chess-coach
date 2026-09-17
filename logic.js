@@ -437,6 +437,82 @@ function weaknessReport(games) {
   return out;
 }
 
+/* ---------- backup: export / import ---------- */
+
+var EXPORT_APP = 'chess-coach';
+var EXPORT_VERSION = 1;
+var MAX_GAMES = 100;
+var MAX_PUZZLES = 200;
+
+function makeExport(games, puzzles, settings) {
+  return {
+    app: EXPORT_APP,
+    version: EXPORT_VERSION,
+    exported: Date.now(),
+    games: games || [],
+    puzzles: puzzles || [],
+    settings: settings || {},
+  };
+}
+
+/* Throws with a readable reason rather than importing nonsense. */
+function validateExport(data) {
+  if (!data || typeof data !== 'object') throw new Error('That file is not Chess Coach data.');
+  if (data.app !== EXPORT_APP) throw new Error('That file is from a different app.');
+  if (!Array.isArray(data.games) || !Array.isArray(data.puzzles)) {
+    throw new Error('That backup is missing its games or puzzles.');
+  }
+  if (data.version > EXPORT_VERSION) {
+    throw new Error('That backup was made by a newer version of Chess Coach.');
+  }
+  return true;
+}
+
+/* Merge rather than replace, so importing on a second device combines the two
+   histories instead of throwing one away. */
+function mergeData(current, incoming) {
+  current = current || {};
+  incoming = incoming || {};
+
+  // Games are identified by their finish time.
+  var byDate = {};
+  (current.games || []).concat(incoming.games || []).forEach(function (g) {
+    if (g && g.date != null) byDate[g.date] = g;
+  });
+  var games = Object.keys(byDate)
+    .map(function (k) { return byDate[k]; })
+    .sort(function (a, b) { return a.date - b.date; })
+    .slice(-MAX_GAMES);
+
+  // Puzzles are identified by the position you went wrong in.
+  var byPos = {};
+  (current.puzzles || []).concat(incoming.puzzles || []).forEach(function (p) {
+    if (!p) return;
+    var key = p.fenMistake || p.id;
+    if (!key) return;
+    var prev = byPos[key];
+    if (!prev) { byPos[key] = p; return; }
+    // Keep whichever copy has made more progress.
+    var a = (prev.solves || 0), b = (p.solves || 0);
+    if (b > a) byPos[key] = p;
+    else if (b === a && (p.due || 0) > (prev.due || 0)) byPos[key] = p;
+  });
+  var puzzles = Object.keys(byPos)
+    .map(function (k) { return byPos[k]; })
+    .sort(function (a, b) { return (a.created || 0) - (b.created || 0); })
+    .slice(-MAX_PUZZLES);
+
+  var settings = Object.assign({}, current.settings || {}, incoming.settings || {});
+
+  return {
+    games: games,
+    puzzles: puzzles,
+    settings: settings,
+    addedGames: games.length - ((current.games || []).length),
+    addedPuzzles: puzzles.length - ((current.puzzles || []).length),
+  };
+}
+
 /* ---------- clock ---------- */
 
 function fmtClock(ms) {
@@ -475,6 +551,9 @@ var API = {
   recordCurve: recordCurve,
   materialFromHistory: materialFromHistory,
   fmtClock: fmtClock,
+  makeExport: makeExport,
+  validateExport: validateExport,
+  mergeData: mergeData,
   phaseOf: phaseOf,
   scheduleReview: scheduleReview,
   isDue: isDue,
