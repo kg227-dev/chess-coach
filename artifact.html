@@ -1,0 +1,108 @@
+<title>Chess Coach</title>
+<link rel="stylesheet" href="styles.css">
+
+<div id="loading" class="loading">
+  <div class="spinner"></div>
+  <p id="loadingText">Loading Stockfish…</p>
+</div>
+
+<div class="app" id="app" hidden>
+
+  <header class="topbar">
+    <div class="brand"><span class="logo">♞</span> Chess Coach</div>
+    <div class="controls">
+      <label class="ctl">Bot
+        <select id="botSkill">
+          <option value="0">Beginner (~800)</option>
+          <option value="3">Novice (~1100)</option>
+          <option value="5" selected>Casual (~1350)</option>
+          <option value="8">Club (~1600)</option>
+          <option value="12">Strong (~1900)</option>
+          <option value="16">Expert (~2200)</option>
+          <option value="20">Max (brutal)</option>
+        </select>
+      </label>
+      <label class="ctl">Review
+        <select id="reviewMode">
+          <option value="every" selected>Every move</option>
+          <option value="mistakes">Only mistakes</option>
+          <option value="off">Off (analyse silently)</option>
+        </select>
+      </label>
+      <label class="ctl">Play as
+        <select id="playColor">
+          <option value="w" selected>White</option>
+          <option value="b">Black</option>
+          <option value="r">Random</option>
+        </select>
+      </label>
+      <button id="resign" class="btn">Resign</button>
+      <button id="newGame" class="btn btn-primary">New game</button>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <section class="board-col">
+      <div class="player" id="playerTop"></div>
+
+      <div class="board-row">
+        <div class="evalbar" id="evalbar" title="Engine evaluation">
+          <div class="evalbar-fill" id="evalFill"></div>
+          <span class="evalbar-label" id="evalLabel">0.0</span>
+        </div>
+
+        <div class="board-wrap" id="boardWrap">
+          <div class="board" id="board"></div>
+          <svg class="arrows" id="arrows" viewBox="0 0 8 8" preserveAspectRatio="none"></svg>
+          <div class="promo" id="promo" hidden></div>
+          <div class="gameover" id="gameover" hidden></div>
+        </div>
+      </div>
+
+      <div class="player" id="playerBottom"></div>
+
+      <div class="status" id="status">Press <b>New game</b> to start.</div>
+    </section>
+
+    <aside class="panel">
+      <div class="tabs">
+        <button class="tab active" data-tab="game">Game</button>
+        <button class="tab" data-tab="progress">Progress</button>
+        <button class="tab" data-tab="puzzles">Puzzles</button>
+        <button class="tab" data-tab="settings">Settings</button>
+      </div>
+
+      <div class="tabpane" id="pane-game">
+        <div class="accrow">
+          <div class="accbox">
+            <span class="acclabel">Accuracy</span>
+            <span class="accvalue" id="accNow">—</span>
+          </div>
+          <div class="accbox">
+            <span class="acclabel">Moves</span>
+            <span class="accvalue small" id="moveCount">0</span>
+          </div>
+          <div class="accbox">
+            <span class="acclabel">Retries</span>
+            <span class="accvalue small" id="retryCount">0</span>
+          </div>
+        </div>
+
+        <div class="review" id="review" hidden></div>
+
+        <div class="movelist" id="movelist"></div>
+      </div>
+
+      <div class="tabpane" id="pane-progress" hidden></div>
+      <div class="tabpane" id="pane-puzzles" hidden></div>
+      <div class="tabpane" id="pane-settings" hidden></div>
+    </aside>
+
+  </main>
+</div>
+
+<script src="vendor/chess.js"></script>
+<script src="logic.js"></script>
+<script src="book.js"></script>
+<script src="app.js"></script>

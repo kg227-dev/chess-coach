@@ -1,0 +1,10 @@
+{
+  "name": "chess-coach",
+  "version": "1.0.0",
+  "description": "Play a bot, get Stockfish feedback on every move, take moves back, and track accuracy game over game.",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "python3 -m http.server 8777"
+  }
+}
