@@ -513,6 +513,64 @@ function mergeData(current, incoming) {
   };
 }
 
+/* ---------- bot strength ---------- */
+
+/* This Stockfish build exposes only "Skill Level", which weakens play by
+   randomising inside the search — it plays well and then hangs a piece for no
+   reason, which teaches the wrong instincts. Instead we search at full strength
+   with MultiPV and pick among the candidates ourselves:
+
+     depth        caps how far ahead it sees, so it misses deep tactics
+                  the way a weaker player does
+     temperature  how willing it is to prefer a slightly worse move
+     maxLoss      a hard ceiling, so it never throws away a piece outright
+                  at a level that shouldn't                                   */
+var BOT_LEVELS = {
+  beginner: { id: 'beginner', label: 'Beginner', elo: 800,  depth: 1,  temperature: 300, maxLoss: 1000 },
+  novice:   { id: 'novice',   label: 'Novice',   elo: 1100, depth: 2,  temperature: 200, maxLoss: 700 },
+  casual:   { id: 'casual',   label: 'Casual',   elo: 1350, depth: 4,  temperature: 130, maxLoss: 450 },
+  club:     { id: 'club',     label: 'Club',     elo: 1600, depth: 6,  temperature: 80,  maxLoss: 300 },
+  strong:   { id: 'strong',   label: 'Strong',   elo: 1900, depth: 8,  temperature: 45,  maxLoss: 180 },
+  expert:   { id: 'expert',   label: 'Expert',   elo: 2200, depth: 10, temperature: 25,  maxLoss: 100 },
+  max:      { id: 'max',      label: 'Max',      elo: null, depth: 14, temperature: 0,   maxLoss: 0 },
+};
+
+function botLevel(id) { return BOT_LEVELS[id] || BOT_LEVELS.casual; }
+
+/* Pick the bot's move from a multi-PV search. Candidates further from the best
+   move are exponentially less likely, and anything past maxLoss is refused
+   outright — including anything that walks into mate, whose loss is enormous. */
+function chooseBotMove(pvs, level, rng) {
+  rng = rng || Math.random;
+  var cands = [], k;
+  for (k in pvs) {
+    var info = pvs[k];
+    if (!info || !info.pv || !info.pv.length) continue;
+    var cp = infoToCp(info);
+    if (cp === null) continue;
+    cands.push({ uci: info.pv[0], cp: cp });
+  }
+  if (!cands.length) return null;
+
+  cands.sort(function (a, b) { return b.cp - a.cp; });
+  var best = cands[0].cp;
+  if (!level || !level.temperature) return cands[0].uci;
+
+  var pool = cands.filter(function (c) { return (best - c.cp) <= level.maxLoss; });
+  if (!pool.length) pool = [cands[0]];
+
+  var weights = pool.map(function (c) { return Math.exp(-(best - c.cp) / level.temperature); });
+  var total = weights.reduce(function (a, b) { return a + b; }, 0);
+  if (!(total > 0)) return pool[0].uci;
+
+  var r = rng() * total;
+  for (var i = 0; i < pool.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return pool[i].uci;
+  }
+  return pool[pool.length - 1].uci;
+}
+
 /* ---------- clock ---------- */
 
 function fmtClock(ms) {
@@ -551,6 +609,9 @@ var API = {
   recordCurve: recordCurve,
   materialFromHistory: materialFromHistory,
   fmtClock: fmtClock,
+  BOT_LEVELS: BOT_LEVELS,
+  botLevel: botLevel,
+  chooseBotMove: chooseBotMove,
   makeExport: makeExport,
   validateExport: validateExport,
   mergeData: mergeData,

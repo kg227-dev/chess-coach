@@ -35,6 +35,7 @@ function pieceMarkup(color, type, cls) {
 }
 const STORE_KEY = 'chesscoach.games.v1';
 const PUZZLE_KEY = 'chesscoach.puzzles.v1';
+const OPENING_KEY = 'chesscoach.openings.v1';
 const BOOK = window.CoachBook;
 const SETTINGS_KEY = 'chesscoach.settings.v1';
 
@@ -136,7 +137,7 @@ const S = {
   me: 'w',
   flip: false,
   engine: null,
-  botSkill: 5,
+  botLevel: 'casual',
   reviewMode: 'every',
   playing: false,
   locked: true,
@@ -154,13 +155,19 @@ const S = {
   legal: [],
   drag: null,
   pendingPromo: null,
-  mode: 'game',      // 'game' | 'puzzle'
+  mode: 'game',      // 'game' | 'puzzle' | 'opening'
   puzzle: null,
+  trainer: null,
   opening: null,
 };
 
 const analyse = (fen, opts = {}) => S.engine.search(fen, Object.assign({ skill: 20, depth: CFG.depth }, opts));
-const botThink = (fen, opts = {}) => S.engine.search(fen, Object.assign({ skill: S.botSkill, multipv: 1 }, opts));
+// Full-strength search with candidates; the weakening happens in chooseBotMove,
+// so the bot plays a plausible move rather than a randomly broken one.
+const botSearch = (fen) => {
+  const lvl = L.botLevel(S.botLevel);
+  return S.engine.search(fen, { skill: 20, depth: lvl.depth, multipv: 5 });
+};
 
 /* ==========================================================================
    Clock
@@ -329,7 +336,7 @@ function playerStrip(name, color, captured, diff) {
 function renderPlayers() {
   const { capturedBy, diff } = L.materialFromHistory(S.chess.history({ verbose: true }));
   const topColor = S.me === 'w' ? 'b' : 'w';
-  const label = $('botSkill').options[$('botSkill').selectedIndex].textContent;
+  const label = $('botLevel').options[$('botLevel').selectedIndex].textContent;
   $('playerTop').innerHTML = playerStrip(label, topColor, capturedBy[topColor], diff);
   $('playerBottom').innerHTML = playerStrip('You', S.me, capturedBy[S.me], diff);
   renderClocks();
@@ -511,10 +518,10 @@ async function newGame() {
   const choice = $('playColor').value;
   S.me = choice === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : choice;
   S.flip = S.me === 'b';
-  S.botSkill = +$('botSkill').value;
+  S.botLevel = $('botLevel').value;
   S.reviewMode = $('reviewMode').value;
 
-  S.mode = 'game'; S.puzzle = null; S.opening = null;
+  S.mode = 'game'; S.puzzle = null; S.trainer = null; S.opening = null;
   S.chess = new Chess();
   S.scored = {}; S.curve = []; S.retries = 0; S.retryAt = {}; S.revealed = {};
   S.lastMove = null; S.pre = null; S.preFen = null;
@@ -560,6 +567,7 @@ async function beginUserTurn() {
 
 async function playUserMove(move) {
   if (S.mode === 'puzzle') return playPuzzleMove(move);
+  if (S.mode === 'opening') return playTrainerMove(move);
   const { from, to, promotion } = move;
   const ply = S.chess.history().length;
   const fenBefore = S.chess.fen();
@@ -735,10 +743,15 @@ async function botMove() {
   S.locked = true;
   setStatus('Bot is thinking…');
   Clock.start(S.me === 'w' ? 'b' : 'w');
-  const r = await botThink(S.chess.fen(), { movetime: CFG.botMs });
+  const lvl = L.botLevel(S.botLevel);
+  // A shallow search returns instantly; pause anyway so moves don't teleport.
+  const [r] = await Promise.all([
+    botSearch(S.chess.fen()),
+    new Promise((res) => setTimeout(res, CFG.botMs)),
+  ]);
   Clock.stop();
   if (!S.playing) return;                    // flagged or resigned while thinking
-  let uci = r.bestmove;
+  let uci = L.chooseBotMove(r.pvs, lvl) || r.bestmove;
   if (!uci) {
     const ms = S.chess.moves({ verbose: true });
     if (!ms.length) return endGame();
@@ -783,7 +796,7 @@ function endGame() {
   if (overall !== null) {
     saveGame({
       date: Date.now(), accuracy: +overall.toFixed(1), moves: recs.length,
-      retries: S.retries, skill: S.botSkill, result: title,
+      retries: S.retries, skill: L.botLevel(S.botLevel).label, result: title,
       breakdown: Object.keys(S.scored).sort((a, b) => a - b).map((k) => {
         const r = S.scored[k];
         return { phase: r.phase, cls: r.cls, acc: r.acc, cpLoss: r.cpLoss, hung: r.hung || null };
@@ -1113,6 +1126,201 @@ function renderPuzzles() {
   });
 }
 
+/* ==========================================================================
+   Opening trainer — drill a memorised line
+   ========================================================================== */
+
+function loadOpeningStats() {
+  try { return JSON.parse(localStorage.getItem(OPENING_KEY) || '{}'); } catch (e) { return {}; }
+}
+function saveOpeningStats(stats) {
+  try { localStorage.setItem(OPENING_KEY, JSON.stringify(stats)); } catch (e) { /* quota */ }
+}
+
+function startTrainer(line) {
+  S.mode = 'opening';
+  S.trainer = { line, idx: 0, misses: 0, totalMisses: 0, revealed: false, wrong: null };
+  S.chess = new Chess();
+  S.me = line.side;
+  S.flip = line.side === 'b';
+  S.playing = true;
+  S.locked = true;
+  S.scored = {}; S.curve = []; S.retries = 0; S.retryAt = {}; S.revealed = {};
+  S.lastMove = null; S.resigned = false; S.flagged = null;
+  clearSelection(); clearArrows();
+  $('gameover').hidden = true;
+  $('promo').hidden = true;
+  Clock.stop();
+
+  buildBoard(); render(); renderMoves(); updateStats(); updateEvalBar(0);
+  document.querySelector('[data-tab="game"]').click();
+  advanceTrainer();
+}
+
+// Play the opponent's book moves until it is the user's turn again.
+function advanceTrainer() {
+  const t = BOOK.trainerTurn(S.trainer.line, S.trainer.idx);
+  if (t.done) return finishTrainer();
+  if (!t.isUser) {
+    S.locked = true;
+    renderTrainerCard();
+    setTimeout(() => {
+      if (S.mode !== 'opening') return;
+      const mv = S.chess.move(t.expected);
+      if (mv) {
+        S.lastMove = { from: mv.from, to: mv.to };
+        render();
+        animateMove(mv.from, mv.to);
+        renderMoves();
+      }
+      S.trainer.idx++;
+      advanceTrainer();
+    }, 450);
+    return;
+  }
+  S.locked = false;
+  renderTrainerCard();
+}
+
+function playTrainerMove({ from, to, promotion }) {
+  const t = BOOK.trainerTurn(S.trainer.line, S.trainer.idx);
+  if (t.done || !t.isUser) return;
+
+  const mv = S.chess.move({ from, to, promotion: promotion || 'q' });
+  if (!mv) return;
+
+  if (mv.san !== t.expected) {
+    S.chess.undo();                       // wrong move never enters the line
+    S.trainer.misses++;
+    S.trainer.totalMisses++;
+    S.trainer.wrong = mv.san;
+    if (S.trainer.misses >= 2) S.trainer.revealed = true;
+    S.draggedMove = false;
+    clearSelection(); render();
+    renderTrainerCard();
+    return;
+  }
+
+  S.lastMove = { from: mv.from, to: mv.to };
+  S.trainer.idx++;
+  S.trainer.misses = 0;
+  S.trainer.revealed = false;
+  S.trainer.wrong = null;
+  clearSelection();
+  render();
+  if (!S.draggedMove) animateMove(mv.from, mv.to);
+  S.draggedMove = false;
+  renderMoves();
+  S.locked = true;
+  advanceTrainer();
+}
+
+function renderTrainerCard() {
+  const { line, idx, revealed, wrong, totalMisses } = S.trainer;
+  const total = line.moves.length;
+  const yourMoveNo = Math.floor(idx / 2) + 1;
+  const el = $('review');
+  const t = BOOK.trainerTurn(line, idx);
+
+  el.innerHTML = `
+    <div class="review-head">
+      <span class="badge" style="background:var(--c-book)">♟</span>
+      <div>
+        <div class="review-title">${line.name}</div>
+        <div class="review-sub">Playing <b>${line.side === 'w' ? 'White' : 'Black'}</b> ·
+          move ${yourMoveNo} of ${Math.ceil(total / 2)} · ${totalMisses} slip${totalMisses === 1 ? '' : 's'}</div>
+      </div>
+    </div>
+    <div class="trainbar"><i style="width:${Math.round((idx / total) * 100)}%"></i></div>
+    ${wrong ? `<div class="reason bad-move"><b>${wrong}</b> isn't this line.</div>` : ''}
+    ${revealed && t.expected ? `<div class="reason answer">The move is <b>${t.expected}</b>.</div>` : ''}
+    ${!t.isUser && !t.done ? '<div class="hidden-answer">Opponent is replying…</div>' : ''}
+    <div class="review-actions">
+      ${t.isUser && !revealed ? '<button class="btn" id="trShow">Show me</button>' : ''}
+      <button class="btn" id="trRestart">Restart</button>
+      <button class="btn btn-primary" id="trExit">Exit</button>
+    </div>`;
+  el.hidden = false;
+
+  const show = $('trShow');
+  if (show) show.onclick = () => { S.trainer.revealed = true; renderTrainerCard(); };
+  $('trRestart').onclick = () => startTrainer(line);
+  $('trExit').onclick = () => { S.mode = 'game'; S.trainer = null; el.hidden = true; newGame(); };
+
+  setStatus(t.isUser
+    ? `<b>${line.name}</b> — your move from memory.`
+    : `<b>${line.name}</b> — watching the reply.`);
+}
+
+function finishTrainer() {
+  S.playing = false;
+  S.locked = true;
+  const { line, totalMisses } = S.trainer;
+
+  const stats = loadOpeningStats();
+  const rec = stats[line.name] || { attempts: 0, completions: 0, bestMisses: null, lastPlayed: 0 };
+  rec.attempts++;
+  rec.completions++;
+  rec.bestMisses = rec.bestMisses === null ? totalMisses : Math.min(rec.bestMisses, totalMisses);
+  rec.lastPlayed = Date.now();
+  stats[line.name] = rec;
+  saveOpeningStats(stats);
+
+  $('review').innerHTML = `
+    <div class="review-head">
+      <span class="badge" style="background:var(--c-best)">✓</span>
+      <div>
+        <div class="review-title" style="color:var(--c-best)">Line complete</div>
+        <div class="review-sub">${line.name} · ${
+          totalMisses === 0 ? 'from memory, no slips' : totalMisses + ' slip' + (totalMisses === 1 ? '' : 's')}</div>
+      </div>
+    </div>
+    <div class="review-actions">
+      <button class="btn" id="trAgain">Again</button>
+      <button class="btn btn-primary" id="trDone">Back to a game</button>
+    </div>`;
+  $('review').hidden = false;
+  $('trAgain').onclick = () => startTrainer(line);
+  $('trDone').onclick = () => { S.mode = 'game'; S.trainer = null; $('review').hidden = true; newGame(); };
+  setStatus(`<b>Line complete</b> — ${line.name}.`);
+  renderOpenings();
+}
+
+function renderOpenings() {
+  const pane = $('pane-openings');
+  if (!pane) return;
+  const stats = loadOpeningStats();
+  const group = (side) => BOOK.TRAINER.filter((l) => l.side === side).map((l) => {
+    const r = stats[l.name];
+    const sub = r
+      ? `done ${r.completions}× · best ${r.bestMisses} slip${r.bestMisses === 1 ? '' : 's'}`
+      : `${Math.ceil(l.moves.length / 2)} moves to learn`;
+    return `<div class="gamerow">
+      <div>
+        <div>${l.name}${r && r.bestMisses === 0 ? ' <span class="perfect">clean</span>' : ''}</div>
+        <div class="date">${sub}</div>
+      </div>
+      <button class="btn" data-open="${l.name}">Train</button>
+    </div>`;
+  }).join('');
+
+  const done = Object.keys(stats).filter((k) => stats[k].completions > 0).length;
+  pane.innerHTML = `
+    <div class="accrow">
+      <div class="accbox"><span class="acclabel">Learned</span><span class="accvalue">${done}</span></div>
+      <div class="accbox"><span class="acclabel">Of</span><span class="accvalue small">${BOOK.TRAINER.length}</span></div>
+    </div>
+    <p class="ptitle">As White</p>${group('w')}
+    <p class="ptitle" style="margin-top:12px">As Black</p>${group('b')}`;
+
+  pane.querySelectorAll('[data-open]').forEach((b) => {
+    b.onclick = () => {
+      const line = BOOK.TRAINER.find((l) => l.name === b.dataset.open);
+      if (line) startTrainer(line);
+    };
+  });
+}
+
 function loadGames() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY) || '[]'); } catch (e) { return []; }
 }
@@ -1241,7 +1449,7 @@ function renderProgress() {
 const SETTING_ROWS = [
   { key: 'timeMin', label: 'Clock per side', type: 'select', opts: [[0, 'Unlimited'], [3, '3 min'], [5, '5 min'], [10, '10 min'], [30, '30 min']], note: 'Applies from the next new game.' },
   { key: 'depth', label: 'Analysis depth', type: 'select', opts: [[8, '8 — fast'], [10, '10'], [12, '12 — default'], [14, '14'], [16, '16 — slow, strict']], note: 'Higher is more accurate but slower per move.' },
-  { key: 'botMs', label: 'Bot think time', type: 'select', opts: [[200, '0.2s'], [450, '0.45s — default'], [1000, '1s'], [2000, '2s']] },
+  { key: 'botMs', label: 'Bot response delay', type: 'select', opts: [[0, 'Instant'], [200, '0.2s'], [450, '0.45s — default'], [1000, '1s']], note: 'How long the bot pauses before replying. Its strength is set by the Bot menu, not this.' },
   { key: 'retryCap', label: 'Take-backs before the answer', type: 'select', opts: [[1, '1'], [2, '2'], [3, '3 — default'], [5, '5'], [99, 'Never reveal']] },
   { key: 'showEval', label: 'Show eval bar during play', type: 'bool', note: 'Off makes you judge the position yourself.' },
   { key: 'showArrows', label: 'Show arrows on the board', type: 'bool' },
@@ -1330,9 +1538,11 @@ document.querySelectorAll('.tab').forEach((t) => {
     $('pane-game').hidden = name !== 'game';
     $('pane-progress').hidden = name !== 'progress';
     $('pane-puzzles').hidden = name !== 'puzzles';
+    $('pane-openings').hidden = name !== 'openings';
     $('pane-settings').hidden = name !== 'settings';
     if (name === 'progress') renderProgress();
     if (name === 'puzzles') renderPuzzles();
+    if (name === 'openings') renderOpenings();
     if (name === 'settings') renderSettings();
   };
 });
@@ -1345,7 +1555,7 @@ $('resign').onclick = () => {
   endGame();
 };
 $('reviewMode').onchange = () => { S.reviewMode = $('reviewMode').value; };
-$('botSkill').onchange = () => { S.botSkill = +$('botSkill').value; renderPlayers(); };
+$('botLevel').onchange = () => { S.botLevel = $('botLevel').value; renderPlayers(); };
 window.addEventListener('resize', sizeBoard);
 window.addEventListener('orientationchange', () => setTimeout(sizeBoard, 200));
 if (window.visualViewport) window.visualViewport.addEventListener('resize', sizeBoard);
@@ -1406,6 +1616,7 @@ function showBootError(err) {
     render();
     renderProgress();
     renderPuzzles();
+    renderOpenings();
     updateEvalBar(0);
     setStatus('Ready. Press <b>New game</b> to start.');
   } catch (e) {

@@ -116,7 +116,49 @@ function openingName(sans) {
   return best ? best.name : null;
 }
 
-var API = { LINES: BOOK, isBook: isBook, openingName: openingName };
+
+/* ---------- opening trainer ---------- */
+
+/* Twenty mainline openings worth knowing by heart, ten for each colour.
+   `side` is the colour you are drilling; the app plays the other side.
+   Every line is validated legal by the test suite. */
+var TRAINER = [
+  // --- White ---
+  ['Italian Game',            'w', 'e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6 d4 exd4 cxd4 Bb4+'],
+  ['Ruy Lopez, Closed',       'w', 'e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O'],
+  ['Scotch Game',             'w', 'e4 e5 Nf3 Nc6 d4 exd4 Nxd4 Bc5 Be3 Qf6 c3 Nge7'],
+  ["Queen's Gambit Declined", 'w', 'd4 d5 c4 e6 Nc3 Nf6 Bg5 Be7 e3 O-O Nf3 h6'],
+  ['London System',           'w', 'd4 d5 Bf4 Nf6 e3 e6 Nf3 Bd6 Bg3 O-O Bd3'],
+  ['English, Symmetrical',    'w', 'c4 c5 Nf3 Nf6 Nc3 Nc6 g3 d5 cxd5 Nxd5 Bg2'],
+  ['Vienna Game',             'w', 'e4 e5 Nc3 Nf6 f4 d5 fxe5 Nxe4 Nf3 Be7 d4 O-O'],
+  ["King's Gambit",           'w', 'e4 e5 f4 exf4 Nf3 g5 h4 g4 Ne5 Nf6 d4 d6'],
+  ['Catalan Opening',         'w', 'd4 Nf6 c4 e6 g3 d5 Bg2 Be7 Nf3 O-O O-O dxc4'],
+  ['Smith-Morra Gambit',      'w', 'e4 c5 d4 cxd4 c3 dxc3 Nxc3 Nc6 Nf3 d6 Bc4 e6'],
+
+  // --- Black ---
+  ['Sicilian, Najdorf',       'b', 'e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 Be3 e5 Nb3 Be6'],
+  ['Sicilian, Dragon',        'b', 'e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6 Be3 Bg7 f3 O-O'],
+  ['French, Winawer',         'b', 'e4 e6 d4 d5 Nc3 Bb4 e5 c5 a3 Bxc3+ bxc3 Ne7'],
+  ['Caro-Kann, Classical',    'b', 'e4 c6 d4 d5 Nc3 dxe4 Nxe4 Bf5 Ng3 Bg6 h4 h6 Nf3 Nd7'],
+  ["King's Indian Defence",   'b', 'd4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5'],
+  ['Nimzo-Indian Defence',    'b', 'd4 Nf6 c4 e6 Nc3 Bb4 e3 O-O Bd3 d5 Nf3 c5'],
+  ['Slav Defence',            'b', 'd4 d5 c4 c6 Nf3 Nf6 Nc3 dxc4 a4 Bf5 e3 e6'],
+  ['Scandinavian Defence',    'b', 'e4 d5 exd5 Qxd5 Nc3 Qa5 d4 Nf6 Nf3 c6 Bc4 Bf5'],
+  ['Petrov Defence',          'b', 'e4 e5 Nf3 Nf6 Nxe5 d6 Nf3 Nxe4 d4 d5 Bd3 Nc6'],
+  ['Grünfeld Defence',        'b', 'd4 Nf6 c4 g6 Nc3 d5 cxd5 Nxd5 e4 Nxc3 bxc3 Bg7'],
+].map(function (t) { return { name: t[0], side: t[1], moves: t[2].split(' ') }; });
+
+/* Whose move it is at `idx`, and what it has to be. Lines always start with a
+   white move, so a black drill means the user plays the odd plies. */
+function trainerTurn(line, idx) {
+  if (!line || idx >= line.moves.length) return { done: true, isUser: false, expected: null };
+  var whiteToMove = (idx % 2) === 0;
+  var isUser = whiteToMove === (line.side === 'w');
+  return { done: false, isUser: isUser, expected: line.moves[idx] };
+}
+
+var API = { LINES: BOOK, isBook: isBook, openingName: openingName,
+            TRAINER: TRAINER, trainerTurn: trainerTurn };
 if (typeof module === 'object' && module.exports) module.exports = API;
 if (root) root.CoachBook = API;
 

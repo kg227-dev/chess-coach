@@ -420,3 +420,13 @@ html, body {
 .gamerow.retired { opacity: .5; }
 .setnote.ok  { color: var(--green); }
 .setnote.bad { color: var(--c-blunder); }
+
+/* ---------- opening trainer ---------- */
+.trainbar { height: 5px; background: var(--panel); border-radius: 3px; overflow: hidden; margin: 8px 0 4px; }
+.trainbar i { display: block; height: 100%; background: var(--green); transition: width .25s ease; }
+.reason.bad-move { border-left-color: var(--c-mistake); }
+.perfect {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--c-best); background: rgba(38,194,163,.13);
+  border-radius: 3px; padding: 1px 5px; margin-left: 6px;
+}

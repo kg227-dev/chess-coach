@@ -85,3 +85,65 @@ describe('openingName', () => {
     assert.equal(B.isBook(sans), false);
   });
 });
+
+describe('opening trainer', () => {
+  test('there are twenty lines, ten per colour', () => {
+    assert.equal(B.TRAINER.length, 20);
+    assert.equal(B.TRAINER.filter((l) => l.side === 'w').length, 10);
+    assert.equal(B.TRAINER.filter((l) => l.side === 'b').length, 10);
+  });
+
+  test('every trainer line is legal from the start position', () => {
+    for (const line of B.TRAINER) {
+      const c = new Chess();
+      line.moves.forEach((san, i) => {
+        const m = c.move(san);
+        assert.ok(m, `${line.name}: illegal move "${san}" at ply ${i + 1}`);
+      });
+    }
+  });
+
+  test('lines are long enough to be worth drilling', () => {
+    for (const line of B.TRAINER) {
+      assert.ok(line.moves.length >= 10, `${line.name} is only ${line.moves.length} plies`);
+    }
+  });
+
+  test('names are unique', () => {
+    const names = B.TRAINER.map((l) => l.name);
+    assert.equal(new Set(names).size, names.length);
+  });
+
+  test('a white drill has the user moving first', () => {
+    const line = B.TRAINER.find((l) => l.side === 'w');
+    const t = B.trainerTurn(line, 0);
+    assert.equal(t.isUser, true);
+    assert.equal(t.expected, line.moves[0]);
+  });
+
+  test('a black drill has the opponent moving first', () => {
+    const line = B.TRAINER.find((l) => l.side === 'b');
+    assert.equal(B.trainerTurn(line, 0).isUser, false);
+    assert.equal(B.trainerTurn(line, 1).isUser, true);
+  });
+
+  test('the user plays every other ply throughout', () => {
+    for (const line of B.TRAINER) {
+      for (let i = 0; i < line.moves.length; i++) {
+        const expectUser = ((i % 2 === 0) === (line.side === 'w'));
+        assert.equal(B.trainerTurn(line, i).isUser, expectUser, `${line.name} ply ${i}`);
+      }
+    }
+  });
+
+  test('running off the end of a line reports done', () => {
+    const line = B.TRAINER[0];
+    const t = B.trainerTurn(line, line.moves.length);
+    assert.equal(t.done, true);
+    assert.equal(t.expected, null);
+  });
+
+  test('handles a missing line', () => {
+    assert.equal(B.trainerTurn(null, 0).done, true);
+  });
+});

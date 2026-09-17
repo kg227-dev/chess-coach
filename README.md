@@ -49,13 +49,17 @@ Safe-area insets are handled, so nothing hides under the notch or home indicator
 cd /Users/kushgulati/Desktop/chess-coach && npm test
 ```
 
-162 unit tests covering scoring, board geometry, the opening book, game
-phases, spaced repetition, the weakness aggregation and backup merging.
+185 unit tests covering scoring, board geometry, the opening book and trainer
+lines, game phases, spaced repetition, weakness aggregation, backup merging and
+bot move selection.
 
 ## What it does
 
-- **Play a bot** at seven strength settings (Skill Level 0–20), with a clock
-  (10 minutes a side by default).
+- **Play a bot** at seven strengths from Beginner (~800) to full strength, with
+  a clock (10 minutes a side by default).
+- **Opening trainer** — drill 20 mainline openings, ten for each colour. The app
+  plays the other side; you play yours from memory. A wrong move is refused and
+  never enters the line, and the answer appears after two slips or on request.
 - **Per-move review** — Brilliant / Best / Excellent / Good / Inaccuracy / Mistake / Blunder,
   how much you gave up in pawns, your accuracy for that move, and the engine's
   top candidate moves with evals and follow-up lines.
@@ -93,6 +97,19 @@ phases, spaced repetition, the weakness aggregation and backup merging.
 - Eval bar, move list with colour-coded quality tags, legal-move dots, check
   highlighting, drag-or-click movement, promotion picker, board flip, resign.
 
+## How the bot is weakened
+
+This Stockfish build exposes only `Skill Level`, which weakens play by
+randomising *inside* the search — it plays well and then hangs a piece for no
+reason, which teaches the wrong instincts. (`UCI_Elo` isn't available here; the
+build has no `UCI_LimitStrength` option at all.)
+
+Instead the bot searches at full strength with MultiPV and the move is chosen
+afterwards: `depth` caps how far ahead it sees so it misses deep tactics the way
+a weaker player does, `temperature` sets how willing it is to take a slightly
+worse move, and `maxLoss` is a hard ceiling so it never throws a piece away at a
+level that shouldn't. Levels live in `BOT_LEVELS` in `logic.js`.
+
 ## How accuracy is measured
 
 Every position is searched at a **fixed depth** (12) with MultiPV, and the move
@@ -120,11 +137,12 @@ rather than being given a made-up one.
 | `styles.css` | chess.com-style dark theme |
 | `logic.js` | All scoring/geometry maths — pure, no DOM, unit tested |
 | `app.js` | Engine worker, game flow, board UI, panels |
-| `book.js` | Opening book (64 lines) |
+| `book.js` | Opening book (64 lines) + 20 trainer lines |
 | `pieces.svg` | Cburnett piece sprite (CC BY-SA 3.0) |
 | `test/logic.test.js` | 106 tests |
-| `test/book.test.js` | 15 tests |
+| `test/book.test.js` | 24 tests |
 | `test/report.test.js` | 41 tests |
+| `test/bot.test.js` | 14 tests |
 | `manifest.webmanifest`, `icons/` | Add-to-Home-Screen metadata and icons |
 | `serve.py` | No-cache dev server |
 | `artifact.html` | Entry point for the published version |
@@ -174,6 +192,8 @@ author list are preserved in `pieces.svg`.
 - The book stops at ~10 plies, so long theoretical lines leave book early.
 - Puzzle difficulty isn't adaptive — every card uses the same 2-ply rewind.
 - The weakness report splits by phase but not by theme (pins, forks, back rank).
+- The opening trainer drills one mainline per opening, with no sidelines and no
+  spaced repetition of its own.
 - No offline service worker yet: the home-screen app still needs a connection on
   first load of each session.
 - No cross-device sync. Export/import covers moving data by hand.
