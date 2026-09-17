@@ -18,14 +18,19 @@ Then open <http://localhost:8777>. `serve.py` sends no-cache headers so edits
 always show up on reload — plain `http.server` caches aggressively and will
 serve you stale JS.
 
-## Published
+## Live
 
-Also live as a private web app (sign-in required, only you can see it):
-<https://claude.ai/artifact/EGLSszr6rvFfp5jsQHrBaJ>
+**<https://kg227-dev.github.io/chess-coach/>**
 
-`artifact.html` is the published entry point — same app, without the outer
-`<html>`/`<head>` wrapper that the host supplies. Republish after changes with
-the Artifact tool using that file and the same URL.
+Served free from GitHub Pages off the `main` branch. Push to `main` and the site
+rebuilds in a couple of minutes:
+
+```bash
+git add -A && git commit -m "..." && git push
+```
+
+`artifact.html` is an alternative entry point for Claude Artifact hosting (same
+app without the outer `<html>` wrapper); it isn't used by the Pages deploy.
 
 ## Test it
 
@@ -33,7 +38,8 @@ the Artifact tool using that file and the same URL.
 cd /Users/kushgulati/Desktop/chess-coach && npm test
 ```
 
-121 unit tests covering every piece of scoring, board and book logic.
+150 unit tests covering scoring, board geometry, the opening book, game
+phases, spaced repetition and the weakness aggregation.
 
 ## What it does
 
@@ -63,6 +69,12 @@ cd /Users/kushgulati/Desktop/chess-coach && npm test
 - **Captured pieces and material lead** under each player, chess.com style.
 - **Post-game review** — eval graph over the whole game, a count of each move
   quality, and your biggest mistakes with the reason for each.
+- **Weakness report** — accuracy, pawns lost per move and blunder counts split
+  by opening / middlegame / endgame, which phase is costing you most, and which
+  piece you hang most often. Phase comes from the material left on the board,
+  not the move number, so a queenless position is an endgame whenever it happens.
+- **Spaced repetition** — solved puzzles come back after 1, 3, 7, 15, 33 days and
+  retire after two months; a miss resets them to ten minutes.
 - **Progress tab** — bar chart of your last 20 games, average and best accuracy.
 - Eval bar, move list with colour-coded quality tags, legal-move dots, check
   highlighting, drag-or-click movement, promotion picker, board flip, resign.
@@ -97,6 +109,7 @@ rather than being given a made-up one.
 | `book.js` | Opening book (64 lines) |
 | `test/logic.test.js` | 106 tests |
 | `test/book.test.js` | 15 tests |
+| `test/report.test.js` | 29 tests |
 | `serve.py` | No-cache dev server |
 | `artifact.html` | Entry point for the published version |
 | `vendor/` | chess.js and stockfish.js, vendored for offline use |
@@ -110,9 +123,21 @@ answer, eval-bar visibility, arrow visibility, and clearing your history.
 In `logic.js`: `classify()` holds the move-quality thresholds and
 `isSacrifice()` decides what counts as Brilliant.
 
+## Hosting notes
+
+The engine runs in a Web Worker, which some sandboxed hosts forbid. `serve.py`
+can reproduce those conditions locally so it can be tested rather than guessed:
+
+```bash
+python3 serve.py 8788 --csp            # artifact-like CSP — engine works
+python3 serve.py 8789 --csp-noworker   # workers blocked — shows the error panel
+```
+
+If workers are blocked the app now fails in about a second with an explanation
+and a retry button, rather than spinning forever.
+
 ## Known gaps
 
-- The weakness report (where you lose value across games) isn't built yet.
-- Puzzles have no spaced repetition — solving one doesn't retire it.
 - The book stops at ~10 plies, so long theoretical lines leave book early.
-- The published version hasn't been runtime-verified — see the note in chat.
+- Puzzle difficulty isn't adaptive — every card uses the same 2-ply rewind.
+- The weakness report splits by phase but not by theme (pins, forks, back rank).
