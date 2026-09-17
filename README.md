@@ -32,6 +32,17 @@ git add -A && git commit -m "..." && git push
 `artifact.html` is an alternative entry point for Claude Artifact hosting (same
 app without the outer `<html>` wrapper); it isn't used by the Pages deploy.
 
+## On your phone
+
+Open <https://kg227-dev.github.io/chess-coach/> in Safari, tap **Share → Add to
+Home Screen**. It launches full-screen with its own icon and no browser chrome —
+close enough to a native app, with no App Store and no build step. Android
+Chrome offers the same through *Install app*.
+
+The phone layout puts the board at full width with the clocks above and below
+it, drops the control labels to two compact rows, and stacks the review buttons.
+Safe-area insets are handled, so nothing hides under the notch or home indicator.
+
 ## Test it
 
 ```bash
@@ -110,6 +121,7 @@ rather than being given a made-up one.
 | `test/logic.test.js` | 106 tests |
 | `test/book.test.js` | 15 tests |
 | `test/report.test.js` | 29 tests |
+| `manifest.webmanifest`, `icons/` | Add-to-Home-Screen metadata and icons |
 | `serve.py` | No-cache dev server |
 | `artifact.html` | Entry point for the published version |
 | `vendor/` | chess.js and stockfish.js, vendored for offline use |
@@ -141,3 +153,5 @@ and a retry button, rather than spinning forever.
 - The book stops at ~10 plies, so long theoretical lines leave book early.
 - Puzzle difficulty isn't adaptive — every card uses the same 2-ply rewind.
 - The weakness report splits by phase but not by theme (pins, forks, back rank).
+- No offline service worker yet: the home-screen app still needs a connection on
+  first load of each session.

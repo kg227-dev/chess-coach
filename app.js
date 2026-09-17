@@ -224,13 +224,22 @@ function buildBoard() {
 }
 
 function sizeBoard() {
-  const main = document.querySelector('.main');
-  const mainW = (main ? main.clientWidth : window.innerWidth) - 40;
-  const stacked = window.innerWidth <= 900;
-  const byWidth = mainW - (stacked ? 0 : 352) - 32;
-  const byHeight = window.innerHeight - (stacked ? 300 : 250);
-  const sq = Math.max(34, Math.floor(Math.min(byWidth, byHeight, 680) / 8));
-  document.documentElement.style.setProperty('--sq', sq + 'px');
+  const vw = window.innerWidth;
+  let sq;
+  if (vw <= 700) {
+    // Phone: the board fills the width and the panel scrolls beneath it.
+    const gutters = 16;                       // .main side padding
+    const evalW = CFG.showEval ? 24 : 0;      // eval bar + gap
+    sq = Math.floor((vw - gutters - evalW) / 8);
+  } else {
+    const main = document.querySelector('.main');
+    const mainW = (main ? main.clientWidth : vw) - 40;
+    const stacked = vw <= 900;
+    const byWidth = mainW - (stacked ? 0 : 352) - 32;
+    const byHeight = window.innerHeight - (stacked ? 300 : 250);
+    sq = Math.floor(Math.min(byWidth, byHeight, 680) / 8);
+  }
+  document.documentElement.style.setProperty('--sq', Math.max(30, sq) + 'px');
 }
 
 function render() {
@@ -1199,6 +1208,8 @@ $('resign').onclick = () => {
 $('reviewMode').onchange = () => { S.reviewMode = $('reviewMode').value; };
 $('botSkill').onchange = () => { S.botSkill = +$('botSkill').value; renderPlayers(); };
 window.addEventListener('resize', sizeBoard);
+window.addEventListener('orientationchange', () => setTimeout(sizeBoard, 200));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', sizeBoard);
 
 /* ==========================================================================
    Boot
