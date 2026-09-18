@@ -36,6 +36,8 @@ function pieceMarkup(color, type, cls) {
 const STORE_KEY = 'chesscoach.games.v1';
 const PUZZLE_KEY = 'chesscoach.puzzles.v1';
 const OPENING_KEY = 'chesscoach.openings.v1';
+const GP_KEY = 'chesscoach.puzzlestats.v1';
+const PUZZLE_DB_URL = 'puzzles.json';
 const BOOK = window.CoachBook;
 const SETTINGS_KEY = 'chesscoach.settings.v1';
 
@@ -576,7 +578,9 @@ async function beginUserTurn() {
 }
 
 async function playUserMove(move) {
-  if (S.mode === 'puzzle') return playPuzzleMove(move);
+  if (S.mode === 'puzzle') {
+    return (S.puzzle && S.puzzle.kind === 'generated') ? playGeneratedMove(move) : playPuzzleMove(move);
+  }
   if (S.mode === 'opening') return playTrainerMove(move);
   if (S.mode === 'learn') return playLessonMove(move);
   const { from, to, promotion } = move;
@@ -1090,6 +1094,232 @@ function capturePuzzle({ ply, mv, res, fenBefore }) {
 /* A puzzle is the position you actually went wrong in, with one move to find.
    Earlier versions started two plies before the mistake and asked for several
    moves, which meant staring at a quiet position with no stated goal. */
+/* ==========================================================================
+   Generated puzzles — Lichess set, by category, with live feedback
+   ========================================================================== */
+
+let puzzleDB = null;
+
+async function loadPuzzleDB() {
+  if (puzzleDB) return puzzleDB;
+  const res = await fetch(PUZZLE_DB_URL);
+  puzzleDB = await res.json();
+  return puzzleDB;
+}
+
+function loadGPStats() {
+  try {
+    return Object.assign({ rating: 1200, solved: 0, attempts: 0, streak: 0, best: 0, byCat: {} },
+      JSON.parse(localStorage.getItem(GP_KEY) || '{}'));
+  } catch (e) {
+    return { rating: 1200, solved: 0, attempts: 0, streak: 0, best: 0, byCat: {} };
+  }
+}
+function saveGPStats(st) {
+  try { localStorage.setItem(GP_KEY, JSON.stringify(st)); } catch (e) { /* quota */ }
+}
+
+async function startGeneratedPuzzle(cat) {
+  const db = await loadPuzzleDB();
+  const stats = loadGPStats();
+  const pool = L.puzzlesInCategory(db.puzzles, cat);
+  const puz = L.pickPuzzle(pool, stats.rating);
+  if (!puz) return;
+
+  const start = L.puzzleStartPosition(puz);
+  if (!start) return;
+
+  stopLessonAuto();
+  S.mode = 'puzzle';
+  S.puzzle = { kind: 'generated', puz, start, idx: 0, cat, wrong: null, hinted: false, tries: 0 };
+  S.chess = L.loadFen(start.fen);
+  S.me = start.sideToMove;
+  S.flip = S.me === 'b';
+  S.playing = true;
+  S.locked = false;
+  S.scored = {}; S.curve = []; S.retries = 0;
+  S.lastMove = { from: start.setup.from, to: start.setup.to };
+  S.resigned = false; S.flagged = null;
+  clearSelection(); clearArrows();
+  $('gameover').hidden = true;
+  $('promo').hidden = true;
+  Clock.stop();
+
+  buildBoard(); render(); renderMoves(); updateStats(); updateEvalBar(0);
+  animateMove(start.setup.from, start.setup.to);     // show the move that set it up
+  document.querySelector('[data-tab="game"]').click();
+  renderGeneratedPrompt();
+}
+
+function catLabel(key) {
+  const c = (puzzleDB && puzzleDB.categories || []).find((x) => x.key === key);
+  return c ? c.label : 'Tactics';
+}
+
+function renderGeneratedPrompt(message, kind) {
+  const { puz, start, idx, cat } = S.puzzle;
+  const side = S.me === 'w' ? 'White' : 'Black';
+  const total = Math.ceil(start.solution.length / 2);
+  const done = Math.floor(idx / 2);
+
+  $('review').innerHTML = `
+    <div class="review-head">
+      <span class="badge" style="background:var(--c-book)">♟</span>
+      <div>
+        <div class="review-title">${side} to play</div>
+        <div class="review-sub">${catLabel(cat)} · rated ${puz.rating}${
+          total > 1 ? ` · move ${Math.min(done + 1, total)} of ${total}` : ''}</div>
+      </div>
+    </div>
+    ${total > 1 ? `<div class="trainbar"><i style="width:${Math.round((done / total) * 100)}%"></i></div>` : ''}
+    ${message ? `<div class="reason ${kind || 'bad-move'}">${message}</div>`
+      : '<div class="reason">Find the move. The last move played is highlighted.</div>'}
+    <div class="review-actions">
+      <button class="btn" id="gpShow">Show me</button>
+      <button class="btn" id="gpSkip">Skip</button>
+      <button class="btn btn-primary" id="gpExit">Exit</button>
+    </div>`;
+  $('review').hidden = false;
+
+  $('gpShow').onclick = () => revealGenerated();
+  $('gpSkip').onclick = () => { recordGenerated(false); startGeneratedPuzzle(cat); };
+  $('gpExit').onclick = () => exitPuzzles();
+  setStatus(`<b>${catLabel(cat)}</b> — ${side} to play.`);
+}
+
+function exitPuzzles() {
+  S.mode = 'game';
+  S.puzzle = null;
+  $('review').hidden = true;
+  clearArrows();
+  newGame();
+}
+
+function recordGenerated(solved) {
+  const { puz, cat } = S.puzzle;
+  const st = loadGPStats();
+  st.attempts++;
+  if (solved) {
+    st.solved++;
+    st.streak++;
+    st.best = Math.max(st.best, st.streak);
+  } else {
+    st.streak = 0;
+  }
+  st.rating = L.nextPuzzleRating(st.rating, puz.rating, solved);
+  const c = st.byCat[cat] || { solved: 0, attempts: 0 };
+  c.attempts++;
+  if (solved) c.solved++;
+  st.byCat[cat] = c;
+  saveGPStats(st);
+  return st;
+}
+
+function revealGenerated() {
+  const { start, idx } = S.puzzle;
+  S.puzzle.hinted = true;
+  const uci = start.solution[idx];
+  if (uci) drawArrows([{ uci, color: '#26c2a3', width: 0.14, opacity: 0.95 }]);
+  S.locked = false;
+  renderGeneratedPrompt(`The move is <b>${L.uciToSan(S.chess.fen(), uci)}</b>. Play it to carry on.`, 'answer');
+}
+
+async function playGeneratedMove({ from, to, promotion }) {
+  const { start, cat } = S.puzzle;
+  const fen = S.chess.fen();
+  const expected = start.solution[S.puzzle.idx];
+  const playedUci = from + to + (promotion || '');
+
+  if (!L.puzzleAccepts(fen, expected, playedUci)) {
+    const probe = S.chess.move({ from, to, promotion: promotion || 'q' });
+    if (!probe) return;                            // not even legal; ignore
+    const san = probe.san;
+    S.chess.undo();
+    clearSelection(); render();
+    S.puzzle.tries++;
+    recordStreakBreak();
+    renderGeneratedPrompt(`<b>${san}</b> isn't it. Look again.`);
+    setStatus('<b>Not that one</b> — try again.');
+    return;
+  }
+
+  const mv = S.chess.move({ from, to, promotion: promotion || 'q' });
+  if (!mv) return;
+  S.lastMove = { from: mv.from, to: mv.to };
+  clearSelection(); clearArrows();
+  render();
+  if (!S.draggedMove) animateMove(mv.from, mv.to);
+  S.draggedMove = false;
+  renderMoves();
+  S.puzzle.idx++;
+
+  if (S.chess.in_checkmate() || S.puzzle.idx >= start.solution.length) {
+    return finishGenerated(true);
+  }
+
+  // Their forced reply.
+  S.locked = true;
+  renderGeneratedPrompt('Good — keep going.', 'answer');
+  setTimeout(() => {
+    if (!S.puzzle || S.puzzle.kind !== 'generated') return;
+    const replyUci = start.solution[S.puzzle.idx];
+    const reply = replyUci ? L.applyUciTo(S.chess, replyUci) : null;
+    if (reply) {
+      S.lastMove = { from: reply.from, to: reply.to };
+      render();
+      animateMove(reply.from, reply.to);
+      renderMoves();
+    }
+    S.puzzle.idx++;
+    if (S.puzzle.idx >= start.solution.length) return finishGenerated(true);
+    S.locked = false;
+    renderGeneratedPrompt();
+  }, 550);
+}
+
+function recordStreakBreak() {
+  const st = loadGPStats();
+  st.streak = 0;
+  saveGPStats(st);
+}
+
+function finishGenerated(solved) {
+  const { puz, cat, hinted, tries } = S.puzzle;
+  S.locked = true;
+  S.playing = false;
+  const clean = solved && !hinted && tries === 0;
+  const st = recordGenerated(clean);
+
+  // Being shown the move and working it out after a wrong try are different
+  // things, and the card should not call them the same.
+  const title = hinted ? 'Solved with help' : clean ? 'Solved' : 'Solved';
+  const detail = hinted ? 'You used the hint.'
+    : tries ? `Took ${tries + 1} tries.`
+    : null;
+  const tone = clean ? 'var(--c-best)' : 'var(--c-inaccuracy)';
+
+  $('review').innerHTML = `
+    <div class="review-head">
+      <span class="badge" style="background:${tone}">${clean ? '✓' : '!'}</span>
+      <div>
+        <div class="review-title" style="color:${tone}">${title}</div>
+        <div class="review-sub">${detail ? detail + ' · ' : ''}${catLabel(cat)} · rated ${puz.rating} · your rating ${st.rating}${
+          st.streak > 1 ? ` · ${st.streak} in a row` : ''}</div>
+      </div>
+    </div>
+    <div class="review-actions">
+      <button class="btn" id="gpAgain">Replay</button>
+      <button class="btn btn-primary" id="gpNext">Next puzzle →</button>
+      <button class="btn" id="gpExit">Exit</button>
+    </div>`;
+  $('review').hidden = false;
+  $('gpAgain').onclick = () => startGeneratedPuzzle(cat);
+  $('gpNext').onclick = () => startGeneratedPuzzle(cat);
+  $('gpExit').onclick = () => exitPuzzles();
+  setStatus(hinted ? '<b>Solved</b> — with a hint.' : clean ? '<b>Solved</b> first try.' : '<b>Solved</b>.');
+  renderPuzzles();
+}
+
 function startPuzzle(rec) {
   const fen = rec.fenMistake || rec.fenStart;      // older puzzles only have fenStart
   const board = L.loadFen(fen);
@@ -1293,57 +1523,61 @@ function showPuzzleSolved(mv, res) {
   renderPuzzles();
 }
 
-function dueLabel(p, now) {
-  if (p.retired) return 'retired';
-  const ms = (p.due || 0) - now;
-  if (ms <= 0) return 'due now';
-  const mins = Math.round(ms / 60000);
-  if (mins < 60) return `due in ${mins} min`;
-  const days = Math.round(ms / 86400000);
-  return days <= 1 ? 'due tomorrow' : `due in ${days} days`;
-}
-
-function renderPuzzles() {
+async function renderPuzzles() {
   const pane = $('pane-puzzles');
   if (!pane) return;
-  const all = loadPuzzles();
-  if (!all.length) {
-    pane.innerHTML = '<div class="empty">No puzzles yet. Every mistake and blunder you make is saved here as a puzzle — the position you went wrong in, with one move to find. Play a game, or import your chess.com games from Settings.</div>';
-    return;
-  }
-  const now = Date.now();
-  const due = L.dueList(all, now);
-  const active = all.filter((p) => !p.retired);
-  const retired = all.filter((p) => p.retired);
 
-  // Due first (soonest), then the rest by next review.
-  const ordered = active.slice().sort((a, b) => (a.due || 0) - (b.due || 0)).concat(retired);
+  let db = null;
+  try { db = await loadPuzzleDB(); } catch (e) { db = null; }
+  const st = loadGPStats();
+  const mine = loadPuzzles();
+  const now = Date.now();
+  const dueMine = L.dueList(mine.filter((p) => !p.retired), now);
+  const accuracy = st.attempts ? Math.round((st.solved / st.attempts) * 100) : null;
+
+  const cats = (db && db.categories) || [];
+  const chips = cats.map((c) => {
+    const n = L.puzzlesInCategory(db.puzzles, c.key).length;
+    const rec = st.byCat[c.key];
+    return `<button class="catcard" data-cat="${c.key}">
+      <span class="catname">${c.label}</span>
+      <span class="catmeta">${rec ? `${rec.solved}/${rec.attempts} solved` : `${n} puzzles`}</span>
+    </button>`;
+  }).join('');
 
   pane.innerHTML = `
     <div class="accrow">
-      <div class="accbox"><span class="acclabel">Due now</span><span class="accvalue">${due.length}</span></div>
-      <div class="accbox"><span class="acclabel">Learning</span><span class="accvalue small">${active.length}</span></div>
-      <div class="accbox"><span class="acclabel">Retired</span><span class="accvalue small">${retired.length}</span></div>
+      <div class="accbox"><span class="acclabel">Puzzle rating</span><span class="accvalue">${st.rating}</span></div>
+      <div class="accbox"><span class="acclabel">Solved</span><span class="accvalue small">${st.solved}</span></div>
+      <div class="accbox"><span class="acclabel">Streak</span><span class="accvalue small">${st.streak}${
+        st.best > st.streak ? ` <span class="muted-sm">best ${st.best}</span>` : ''}</span></div>
     </div>
-    ${due.length ? '<button class="btn btn-primary" id="reviewNext" style="width:100%;margin-bottom:10px">Solve next due</button>' : ''}
-    <p class="ptitle">From your own games</p>
-    ` + ordered.map((p) => `
-    <div class="gamerow${p.retired ? ' retired' : ''}">
-      <div>
-        <div><span style="color:${CLS_COLOR[p.cls]}">${p.cls}</span> — cost you ${(p.cpLoss / 100).toFixed(1)} pawns</div>
-        <div class="date">${dueLabel(p, now)} · solved ${p.solves || 0}× · missed ${p.lapses || 0}×</div>
-      </div>
-      <button class="btn" data-puzzle="${p.id}">${p.retired ? 'Replay' : 'Solve'}</button>
-    </div>`).join('');
+    ${accuracy !== null ? `<p class="setnote" style="margin:0 0 10px">${accuracy}% solved first try, over ${st.attempts} puzzles.</p>` : ''}
+    <button class="btn btn-primary" id="gpRandom" style="width:100%;margin-bottom:12px">Random puzzle</button>
+    <p class="ptitle">By theme</p>
+    <div class="catgrid">${chips}</div>
+    ${db ? '' : '<div class="empty">Puzzle set unavailable — check your connection.</div>'}
+    <p class="ptitle" style="margin-top:16px">From your own games</p>
+    ${mine.length ? `
+      <div class="gamerow">
+        <div>
+          <div>${dueMine.length} due · ${mine.length} saved</div>
+          <div class="date">Positions you actually went wrong in.</div>
+        </div>
+        <button class="btn" id="mineStart">${dueMine.length ? 'Solve' : 'Review'}</button>
+      </div>` :
+      '<div class="empty">Nothing yet — your own mistakes are saved here as you play, or import your chess.com games from Settings.</div>'}`;
 
-  const next = $('reviewNext');
-  if (next) next.onclick = () => startPuzzle(due[0]);
-  pane.querySelectorAll('[data-puzzle]').forEach((b) => {
-    b.onclick = () => {
-      const hit = loadPuzzles().find((x) => x.id === b.dataset.puzzle);
-      if (hit) startPuzzle(hit);
-    };
+  const rnd = $('gpRandom');
+  if (rnd) rnd.onclick = () => startGeneratedPuzzle('all');
+  pane.querySelectorAll('[data-cat]').forEach((b) => {
+    b.onclick = () => startGeneratedPuzzle(b.dataset.cat);
   });
+  const ms = $('mineStart');
+  if (ms) ms.onclick = () => {
+    const pick = dueMine[0] || mine.slice().sort((a, b) => (a.due || 0) - (b.due || 0))[0];
+    if (pick) startPuzzle(pick);
+  };
 }
 
 /* ==========================================================================

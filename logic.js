@@ -98,6 +98,8 @@ function applyUci(chess, uci) {
   return chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || 'q' });
 }
 
+function applyUciTo(chess, uci) { return applyUci(chess, uci); }
+
 function uciToSan(fen, uci) {
   try {
     var m = applyUci(new Chess(fen), uci);
@@ -864,6 +866,65 @@ function chessComResult(game, username) {
   return 'Draw';
 }
 
+/* ---------- generated puzzles ---------- */
+
+/* Lichess puzzles start one move early: the FEN is the position before the
+   opponent's move, `moves[0]` is played for you, and the solution is the odd
+   indices from there. */
+function puzzleStartPosition(puz) {
+  if (!puz || !puz.fen || !puz.moves) return null;
+  var c = loadFen(puz.fen);
+  if (!c) return null;
+  var moves = String(puz.moves).split(/\s+/).filter(Boolean);
+  if (!moves.length) return null;
+  var setup = applyUci(c, moves[0]);
+  if (!setup) return null;
+  return { fen: c.fen(), solution: moves.slice(1), setup: setup, sideToMove: c.turn() };
+}
+
+function puzzleSolutionLength(puz) {
+  var start = puzzleStartPosition(puz);
+  if (!start) return 0;
+  return Math.ceil(start.solution.length / 2);
+}
+
+/* Accept the intended move, or any move that simply delivers mate — several
+   puzzles have more than one mate and refusing them is just annoying. */
+function puzzleAccepts(fen, expectedUci, playedUci) {
+  if (!expectedUci || !playedUci) return false;
+  var samePromotion = (playedUci[4] || '') === (expectedUci[4] || '');
+  if (sameMove(playedUci, expectedUci) && samePromotion) return true;
+  var c = loadFen(fen);
+  if (!c) return false;
+  var m = applyUci(c, playedUci);
+  return !!(m && c.in_checkmate());
+}
+
+function puzzlesInCategory(all, key) {
+  if (!all || !all.length) return [];
+  if (!key || key === 'all') return all.slice();
+  return all.filter(function (p) { return (p.cats || []).indexOf(key) !== -1; });
+}
+
+/* Pick one, preferring puzzles near the given rating so difficulty tracks you. */
+function pickPuzzle(pool, rating, rng) {
+  if (!pool || !pool.length) return null;
+  rng = rng || Math.random;
+  if (!rating) return pool[Math.floor(rng() * pool.length)];
+  var near = pool.filter(function (p) { return Math.abs((p.rating || 1500) - rating) <= 300; });
+  var from = near.length >= 5 ? near : pool;
+  return from[Math.floor(rng() * from.length)];
+}
+
+/* Simple Elo-ish nudge so the puzzles you get track how you are doing. */
+function nextPuzzleRating(current, puzzleRating, solved) {
+  var cur = current || 1200;
+  var target = puzzleRating || cur;
+  var delta = solved ? 0.08 * Math.max(40, target - cur + 120) : -0.08 * Math.max(40, cur - target + 120);
+  var next = Math.round(cur + delta);
+  return Math.max(600, Math.min(2400, next));
+}
+
 /* ---------- clock ---------- */
 
 function fmtClock(ms) {
@@ -892,6 +953,7 @@ var API = {
   fmtEval: fmtEval,
   sameMove: sameMove,
   uciToSan: uciToSan,
+  applyUciTo: applyUciTo,
   pvToSan: pvToSan,
   squareToXY: squareToXY,
   boardSquares: boardSquares,
@@ -903,6 +965,12 @@ var API = {
   recordCurve: recordCurve,
   materialFromHistory: materialFromHistory,
   fmtClock: fmtClock,
+  puzzleStartPosition: puzzleStartPosition,
+  puzzleSolutionLength: puzzleSolutionLength,
+  puzzleAccepts: puzzleAccepts,
+  puzzlesInCategory: puzzlesInCategory,
+  pickPuzzle: pickPuzzle,
+  nextPuzzleRating: nextPuzzleRating,
   TIME_BUCKETS: TIME_BUCKETS,
   bucketForMs: bucketForMs,
   timeReport: timeReport,

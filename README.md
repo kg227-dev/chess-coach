@@ -53,9 +53,9 @@ registered over https only, so `localhost` stays uncached while you're editing.
 cd /Users/kushgulati/Desktop/chess-coach && npm test
 ```
 
-208 unit tests covering scoring, board geometry, the opening book and trainer
-lines, game phases, spaced repetition, weakness aggregation, tactical themes,
-backup merging and bot move selection.
+264 unit tests covering scoring, board geometry, the opening book and trainer
+lines, the puzzle set, game phases, spaced repetition, weakness aggregation,
+tactical themes, backup merging and bot move selection.
 
 ## What it does
 
@@ -85,12 +85,15 @@ backup merging and bot move selection.
   is marked *Book* and left out of your accuracy — the engine preferring one
   normal developing move over another says nothing about how you played. A
   64-line book covers what a club player actually reaches.
-- **Puzzles from your own mistakes.** Every mistake and blunder is saved as a
-  puzzle: the position you actually went wrong in, one move to find, with the
-  side to move and the goal stated plainly. The pass mark is the same bar the
-  rest of the app uses — a move that gives nothing away (Good or better). Solve
-  it and you're told what you originally played and what it cost; **Show me**
-  reveals the engine's choice. Solved puzzles chain straight into the next due.
+- **1,687 puzzles in ten themes** — Mate in 1/2/3, back rank, forks, pins and
+  skewers, hanging pieces, discovered attacks, sacrifices, endgames. Each is
+  rated, each move is checked as you play it, and the opponent's forced reply
+  comes back automatically. Your puzzle rating moves with you and picks puzzles
+  near your level. Every puzzle is validated legal at build time.
+- **Puzzles from your own mistakes** too, as their own category: the position
+  you actually went wrong in, one move to find, judged by the same
+  Good-or-better bar the rest of the app uses, and told afterwards what you
+  originally played and what it cost.
 - **Captured pieces and material lead** under each player, chess.com style.
 - **Post-game review** — eval graph over the whole game, a count of each move
   quality, and your biggest mistakes with the reason for each.
@@ -180,6 +183,7 @@ rather than being given a made-up one.
 | `logic.js` | All scoring/geometry maths — pure, no DOM, unit tested |
 | `app.js` | Engine worker, game flow, board UI, panels |
 | `book.js` | Opening book (64 lines) + 20 trainer lines |
+| `puzzles.json` | 1,687 rated puzzles in ten themes (Lichess, CC0) |
 | `pieces.svg` | Cburnett piece sprite (CC BY-SA 3.0) |
 | `test/logic.test.js` | 106 tests |
 | `test/book.test.js` | 24 tests |
@@ -230,6 +234,12 @@ Use **Settings → Export** for a copy, and **Import** to merge it somewhere els
 Piece graphics are the Cburnett set from Wikimedia Commons, used under
 [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/); the licence and
 author list are preserved in `pieces.svg`.
+
+Puzzles are sampled from the
+[Lichess puzzle database](https://database.lichess.org/), released under CC0.
+`puzzles.json` is a balanced subset — 170 per theme, filtered to well-played,
+well-liked puzzles between 600 and 2400 — and every line is replayed through
+chess.js in the test suite, so a broken puzzle can't ship.
 
 ## Known gaps
 

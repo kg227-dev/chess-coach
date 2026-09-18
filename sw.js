@@ -5,7 +5,7 @@
    An earlier version served everything cache-first, which meant a deploy was
    always one reload behind — you'd get the previous build, and the new one only
    on the load after that. Big immutable assets stay cache-first. */
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = `chess-coach-${VERSION}`;
 
 const ASSETS = [
@@ -16,6 +16,7 @@ const ASSETS = [
   './book.js',
   './app.js',
   './pieces.svg',
+  './puzzles.json',
   './manifest.webmanifest',
   './vendor/chess.js',
   './vendor/stockfish.js',
