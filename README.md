@@ -43,6 +43,10 @@ The phone layout puts the board at full width with the clocks above and below
 it, drops the control labels to two compact rows, and stacks the review buttons.
 Safe-area insets are handled, so nothing hides under the notch or home indicator.
 
+It works **offline**. A service worker precaches the shell and the engine on
+first visit, so the home-screen app opens cold with no connection. The worker is
+registered over https only, so `localhost` stays uncached while you're editing.
+
 ## Test it
 
 ```bash
@@ -144,6 +148,7 @@ rather than being given a made-up one.
 | `test/report.test.js` | 41 tests |
 | `test/bot.test.js` | 14 tests |
 | `manifest.webmanifest`, `icons/` | Add-to-Home-Screen metadata and icons |
+| `sw.js` | Service worker — offline precache |
 | `serve.py` | No-cache dev server |
 | `artifact.html` | Entry point for the published version |
 | `vendor/` | chess.js and stockfish.js, vendored for offline use |
@@ -194,6 +199,6 @@ author list are preserved in `pieces.svg`.
 - The weakness report splits by phase but not by theme (pins, forks, back rank).
 - The opening trainer drills one mainline per opening, with no sidelines and no
   spaced repetition of its own.
-- No offline service worker yet: the home-screen app still needs a connection on
-  first load of each session.
 - No cross-device sync. Export/import covers moving data by hand.
+- Bumping `VERSION` in `sw.js` is manual; forget it and returning visitors keep
+  the old assets until the navigation request refreshes them.
