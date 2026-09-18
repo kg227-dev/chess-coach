@@ -62,11 +62,12 @@ backup merging and bot move selection.
 - **Play a bot** at seven strengths from Beginner (~800) to full strength, with
   a clock (10 minutes a side by default).
 - **Opening trainer** — 20 mainline openings, ten for each colour, each with a
-  **Learn** walkthrough and a **Train** drill. The walkthrough draws an arrow for
-  the next move, says plainly what it does, and steps or auto-plays through the
-  whole line; the drill then has you play your side from memory, refusing wrong
-  moves rather than letting them into the line. Openings you've seen default to
-  Train, ones you haven't default to Learn.
+  **Tutorial** and a **Practice** mode. The tutorial draws an arrow for the next
+  move, says plainly what it does, and steps or auto-plays through the whole
+  line. Practice then has you play your side from memory, refusing wrong moves
+  rather than letting them into the line, with the answer after two slips or on
+  request. Openings you've seen default to Practice, ones you haven't default to
+  Tutorial, and you can jump back to the tutorial from inside practice.
 - **Per-move review** — Brilliant / Best / Excellent / Good / Inaccuracy / Mistake / Blunder,
   how much you gave up in pawns, your accuracy for that move, and the engine's
   top candidate moves with evals and follow-up lines.

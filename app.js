@@ -1376,7 +1376,7 @@ function renderLesson() {
       <span class="badge" style="background:var(--c-book)">👁</span>
       <div>
         <div class="review-title">${line.name}</div>
-        <div class="review-sub">Walkthrough · ${Math.min(idx + 1, total)} of ${total} half-moves</div>
+        <div class="review-sub">Tutorial · ${Math.min(idx + 1, total)} of ${total} half-moves</div>
       </div>
     </div>
     ${line.idea ? `<div class="reason">${line.idea}</div>` : ''}
@@ -1389,7 +1389,7 @@ function renderLesson() {
       ${idx > 0 ? '<button class="btn" id="lsBack">← Back</button>' : ''}
       ${done ? '' : `<button class="btn" id="lsAuto">${auto ? 'Pause' : 'Play through'}</button>`}
       ${done ? '' : '<button class="btn" id="lsNext">Next →</button>'}
-      <button class="btn btn-primary" id="lsTrain">${done ? 'Try it from memory' : 'Skip to training'}</button>
+      <button class="btn btn-primary" id="lsTrain">${done ? 'Practice it from memory' : 'Skip to practice'}</button>
     </div>`;
   $('review').hidden = false;
 
@@ -1514,7 +1514,7 @@ function renderTrainerCard() {
       <span class="badge" style="background:var(--c-book)">♟</span>
       <div>
         <div class="review-title">${line.name}</div>
-        <div class="review-sub">Playing <b>${line.side === 'w' ? 'White' : 'Black'}</b> ·
+        <div class="review-sub">Practice · <b>${line.side === 'w' ? 'White' : 'Black'}</b> ·
           move ${yourMoveNo} of ${Math.ceil(total / 2)} · ${totalMisses} slip${totalMisses === 1 ? '' : 's'}</div>
       </div>
     </div>
@@ -1523,7 +1523,8 @@ function renderTrainerCard() {
     ${revealed && t.expected ? `<div class="reason answer">The move is <b>${t.expected}</b>.</div>` : ''}
     ${!t.isUser && !t.done ? '<div class="hidden-answer">Opponent is replying…</div>' : ''}
     <div class="review-actions">
-      ${t.isUser && !revealed ? '<button class="btn" id="trShow">Show me</button>' : ''}
+      ${t.isUser && !revealed ? '<button class="btn" id="trShow">Show me this move</button>' : ''}
+      <button class="btn" id="trTutorial">↺ Tutorial</button>
       <button class="btn" id="trRestart">Restart</button>
       <button class="btn btn-primary" id="trExit">Exit</button>
     </div>`;
@@ -1531,6 +1532,7 @@ function renderTrainerCard() {
 
   const show = $('trShow');
   if (show) show.onclick = () => { S.trainer.revealed = true; renderTrainerCard(); };
+  $('trTutorial').onclick = () => { S.trainer = null; startLesson(line); };
   $('trRestart').onclick = () => startTrainer(line);
   $('trExit').onclick = () => { S.mode = 'game'; S.trainer = null; el.hidden = true; newGame(); };
 
@@ -1589,8 +1591,8 @@ function renderOpenings() {
         <div class="date">${sub}</div>
       </div>
       <span class="rowbtns">
-        <button class="btn${seen ? '' : ' btn-primary'}" data-learn="${l.name}">Learn</button>
-        <button class="btn${seen ? ' btn-primary' : ''}" data-open="${l.name}">Train</button>
+        <button class="btn${seen ? '' : ' btn-primary'}" data-learn="${l.name}">Tutorial</button>
+        <button class="btn${seen ? ' btn-primary' : ''}" data-open="${l.name}">Practice</button>
       </span>
     </div>`;
   }).join('');
