@@ -1,6 +1,11 @@
 /* Offline support. The engine alone is 1.5MB, so without this the home-screen
-   app re-downloads it on every cold start and does nothing on a plane. */
-const VERSION = 'v1';
+   app re-downloads it on every cold start and does nothing on a plane.
+
+   Code is served network-first and only falls back to the cache when offline.
+   An earlier version served everything cache-first, which meant a deploy was
+   always one reload behind — you'd get the previous build, and the new one only
+   on the load after that. Big immutable assets stay cache-first. */
+const VERSION = 'v2';
 const CACHE = `chess-coach-${VERSION}`;
 
 const ASSETS = [
@@ -19,6 +24,14 @@ const ASSETS = [
   './icons/apple-touch-icon.png',
 ];
 
+// Large and effectively immutable — always worth serving straight from cache.
+function isStaticAsset(pathname) {
+  return pathname.includes('/vendor/')
+    || pathname.includes('/icons/')
+    || pathname.endsWith('.svg')
+    || pathname.endsWith('.png');
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE)
@@ -35,6 +48,28 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+function cacheFirst(req) {
+  return caches.match(req).then((hit) => {
+    const network = fetch(req).then((res) => {
+      if (res && res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone())).catch(() => {});
+      return res;
+    }).catch(() => hit);
+    return hit || network;
+  });
+}
+
+function networkFirst(req, fallbackKey) {
+  return fetch(req)
+    .then((res) => {
+      if (res && res.ok) {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(fallbackKey || req, copy)).catch(() => {});
+      }
+      return res;
+    })
+    .catch(() => caches.match(fallbackKey || req).then((hit) => hit || caches.match('./index.html')));
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -42,31 +77,9 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;   // never intercept anything external
 
-  // Navigations go to the network first, so a new deploy lands on the next
-  // visit rather than being pinned by the cache; the cache is the fallback.
   if (req.mode === 'navigate') {
-    event.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put('./index.html', copy)).catch(() => {});
-          return res;
-        })
-        .catch(() => caches.match('./index.html').then((hit) => hit || caches.match('./')))
-    );
+    event.respondWith(networkFirst(req, './index.html'));
     return;
   }
-
-  // Everything else is served from the cache and refreshed behind the scenes.
-  event.respondWith(
-    caches.match(req).then((hit) => {
-      const network = fetch(req)
-        .then((res) => {
-          if (res && res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone())).catch(() => {});
-          return res;
-        })
-        .catch(() => hit);
-      return hit || network;
-    })
-  );
+  event.respondWith(isStaticAsset(url.pathname) ? cacheFirst(req) : networkFirst(req));
 });

@@ -2252,7 +2252,11 @@ function registerServiceWorker() {
   if (!('serviceWorker' in navigator) || location.protocol !== 'https:') return;
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js')
-      .then(() => console.log('[sw] registered'))
+      .then((reg) => {
+        console.log('[sw] registered');
+        // A new build activating under a live page means the code just changed.
+        if (reg) reg.addEventListener('updatefound', () => console.log('[sw] update downloading'));
+      })
       .catch((e) => console.warn('[sw] not registered:', e.message));
   });
 }
