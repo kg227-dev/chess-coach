@@ -1603,7 +1603,18 @@ function showBootError(err) {
   if (b) b.onclick = () => location.reload();
 }
 
+// Offline support, https only — localhost stays uncached so edits show up.
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator) || location.protocol !== 'https:') return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .then(() => console.log('[sw] registered'))
+      .catch((e) => console.warn('[sw] not registered:', e.message));
+  });
+}
+
 (async function boot() {
+  registerServiceWorker();
   spriteReady = await loadPieces();
   buildBoard();
   render();
