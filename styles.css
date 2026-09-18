@@ -443,3 +443,12 @@ html, body {
   color: var(--muted); margin-bottom: 2px;
 }
 .rowbtns { display: flex; gap: 6px; }
+.setrow input[type="text"] {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 5px; padding: 6px 9px; font-size: 12px; width: 140px;
+}
+.best-list li.pickable { cursor: pointer; transition: background .12s ease; }
+.best-list li.pickable:hover { background: #33312d; }
+.best-list li.pickable::after {
+  content: "›"; margin-left: auto; color: var(--muted); font-size: 16px; line-height: 1;
+}

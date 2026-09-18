@@ -91,6 +91,10 @@ backup merging and bot move selection.
 - **Captured pieces and material lead** under each player, chess.com style.
 - **Post-game review** — eval graph over the whole game, a count of each move
   quality, and your biggest mistakes with the reason for each.
+- **Think-time analysis** — accuracy split by how long you spent, so you can see
+  whether your errors come from moving too fast.
+- **Blunder-check** (optional) — a nudge to look again before a losing move,
+  without saying what's wrong. Your accuracy still records the move you played.
 - **Weakness report** — accuracy, pawns lost per move and blunder counts split
   by opening / middlegame / endgame, plus **what kind of tactic beats you**:
   hanging pieces, forks, pins, back rank, allowed and missed mates, missed
@@ -106,6 +110,14 @@ backup merging and bot move selection.
 - Eval bar, move list with colour-coded quality tags, legal-move dots, check
   highlighting, drag-or-click movement, promotion picker, board flip, resign.
 
+## Your real chess.com games
+
+Settings → **Your chess.com games**: enter your handle and it pulls your recent
+public games and runs the same review over them, so the weakness report and the
+puzzle set come from real opponents rather than the bot. Read-only, no password,
+nothing is sent anywhere — chess.com's public API allows browser requests
+directly. Roughly 10-20 seconds per game at the default depth.
+
 ## How the bot is weakened
 
 This Stockfish build exposes only `Skill Level`, which weakens play by
@@ -118,6 +130,24 @@ afterwards: `depth` caps how far ahead it sees so it misses deep tactics the way
 a weaker player does, `temperature` sets how willing it is to take a slightly
 worse move, and `maxLoss` is a hard ceiling so it never throws a piece away at a
 level that shouldn't. Levels live in `BOT_LEVELS` in `logic.js`.
+
+## How move quality is judged
+
+Not by raw centipawns, but by how much **winning chance** a move threw away —
+the same win-percentage model the accuracy score uses, so the two agree:
+
+| Win% thrown away | Verdict |
+| --- | --- |
+| under 2 | Excellent |
+| 2-10 | Good |
+| 10-20 | Inaccuracy |
+| 20-30 | Mistake |
+| 30+ | Blunder |
+
+This matters because centipawns alone are misleading. Dropping 1.5 pawns from an
+equal position is an Inaccuracy; dropping the same 1.5 pawns while already a rook
+up is merely Good, because it doesn't change the result. An earlier version
+classified on absolute centipawn loss and called ordinary moves mistakes.
 
 ## How accuracy is measured
 

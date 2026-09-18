@@ -842,6 +842,7 @@ function endGame() {
   S.locked = true;
   Clock.stop();
   clearArrows();
+  S.finalSans = S.chess.history();      // so a mistake can be inspected and undone
 
   let title = 'Game over', sub = '';
   if (S.flagged) {
@@ -953,8 +954,10 @@ function renderPostGame() {
 
   const worst = recs.filter((r) => ['Inaccuracy', 'Mistake', 'Blunder'].includes(r.cls))
     .sort((a, b) => b.cpLoss - a.cpLoss).slice(0, 6);
+  S.worstPlies = worst.map((r) => r.ply);
   const rows = worst.map((r) => `
-    <li><span class="mv" style="color:${CLS_COLOR[r.cls]}">${Math.floor(r.ply / 2) + 1}. ${r.san}</span>
+    <li class="pickable" data-ply="${r.ply}" title="Show this position">
+        <span class="mv" style="color:${CLS_COLOR[r.cls]}">${Math.floor(r.ply / 2) + 1}. ${r.san}</span>
         <span class="ev" style="color:${CLS_COLOR[r.cls]}">−${(r.cpLoss / 100).toFixed(1)}</span>
         <span class="ln">${r.reason || (r.bestSan ? 'Best was ' + r.bestSan : '')}</span></li>`).join('');
 
@@ -966,6 +969,76 @@ function renderPostGame() {
       ? `<div class="best-label">Biggest mistakes</div><ol class="best-list">${rows}</ol>`
       : '<div class="reason">No inaccuracies — clean game.</div>'}`;
   el.hidden = false;
+
+  el.querySelectorAll('[data-ply]').forEach((li) => {
+    li.onclick = () => showMistake(+li.dataset.ply);
+  });
+}
+
+/* Put the board back to a mistake so you can look at what you missed. */
+function showMistake(ply) {
+  const rec = S.scored[ply];
+  if (!rec || !rec.fenBefore) return;
+  const board = L.loadFen(rec.fenBefore);
+  if (!board) return;
+
+  S.mode = 'review';
+  S.playing = false;
+  S.locked = true;
+  S.chess = board;
+  S.flip = S.me === 'b';
+  S.lastMove = null;
+  clearSelection();
+  buildBoard();
+  render();
+
+  const playedUci = L.sanToUci(rec.fenBefore, rec.san);
+  const bestUci = rec.bestSan ? L.sanToUci(rec.fenBefore, rec.bestSan) : null;
+  drawArrows([
+    ...(playedUci ? [{ uci: playedUci, color: CLS_COLOR[rec.cls], width: 0.11, opacity: 0.85 }] : []),
+    ...(bestUci && bestUci !== playedUci ? [{ uci: bestUci, color: '#26c2a3', width: 0.14, opacity: 0.95 }] : []),
+  ]);
+
+  const list = S.worstPlies || [];
+  const at = list.indexOf(ply);
+  const moveNo = Math.floor(ply / 2) + 1;
+
+  $('review').innerHTML = `
+    <div class="review-head">
+      <span class="badge" style="background:${CLS_COLOR[rec.cls]}">${(L.CLASSES[rec.cls] || {}).icon || '?'}</span>
+      <div>
+        <div class="review-title" style="color:${CLS_COLOR[rec.cls]}">${rec.cls} · move ${moveNo}</div>
+        <div class="review-sub">You played <b>${rec.san}</b>${
+          rec.bestSan ? ` · best was <b>${rec.bestSan}</b>` : ''} · gave up ${(rec.cpLoss / 100).toFixed(2)} pawns</div>
+      </div>
+    </div>
+    ${rec.reason ? `<div class="reason">${rec.reason}</div>` : ''}
+    <div class="hidden-answer">Your move in red, the engine's in teal — this is the position before you moved.</div>
+    <div class="review-actions">
+      ${at > 0 ? '<button class="btn" id="mPrev">← Previous</button>' : ''}
+      ${at >= 0 && at < list.length - 1 ? '<button class="btn" id="mNext">Next →</button>' : ''}
+      <button class="btn btn-primary" id="mBack">Back to review</button>
+    </div>`;
+  $('review').hidden = false;
+  setStatus(`<b>Move ${moveNo}</b> — the position before <b>${rec.san}</b>.`);
+
+  const prev = $('mPrev');
+  if (prev) prev.onclick = () => showMistake(list[at - 1]);
+  const next = $('mNext');
+  if (next) next.onclick = () => showMistake(list[at + 1]);
+  $('mBack').onclick = () => {
+    S.mode = 'game';
+    const c = new Chess();
+    (S.finalSans || []).forEach((san) => c.move(san));
+    S.chess = c;
+    S.lastMove = null;
+    clearArrows();
+    buildBoard();
+    render();
+    renderMoves();
+    renderPostGame();
+    setStatus('Game review.');
+  };
 }
 
 /* ==========================================================================
@@ -1115,6 +1188,12 @@ function showPuzzleResult(solved, mv, res, fenBefore) {
 
   const color = solved ? 'var(--c-best)' : 'var(--c-blunder)';
   const bestSan = res.bestUci ? L.uciToSan(fenBefore, res.bestUci) : null;
+
+  // Queue up the next one so a session can keep rolling — due first, then
+  // whatever comes round soonest.
+  const pool = loadPuzzles().filter((p) => p.id !== rec.id && !p.retired);
+  const dueNow = L.dueList(pool, Date.now());
+  const next = dueNow[0] || pool.slice().sort((a, b) => (a.due || 0) - (b.due || 0))[0] || null;
   $('review').innerHTML = `
     <div class="review-head">
       <span class="badge" style="background:${color}">${solved ? '✓' : '✗'}</span>
@@ -1127,20 +1206,24 @@ function showPuzzleResult(solved, mv, res, fenBefore) {
     ${!solved && bestSan ? `<div class="reason answer">Best was ${bestSan}.</div>` : ''}
     <div class="review-actions">
       <button class="btn" id="pzRetry">Try again</button>
-      <button class="btn btn-primary" id="pzDone">Back to a game</button>
+      ${next ? '<button class="btn btn-primary" id="pzNext">Next puzzle →</button>' : ''}
+      <button class="btn${next ? '' : ' btn-primary'}" id="pzDone">Back to a game</button>
     </div>`;
   $('review').hidden = false;
 
   if (!solved && res.bestUci) drawArrows([{ uci: res.bestUci, color: '#26c2a3', width: 0.14 }]);
 
   $('pzRetry').onclick = () => startPuzzle(rec);
+  const nextBtn = $('pzNext');
+  if (nextBtn) nextBtn.onclick = () => startPuzzle(next);
   $('pzDone').onclick = () => { $('review').hidden = true; clearArrows(); newGame(); };
   const when = sched && sched.retired ? 'retired — you have this one'
     : sched ? 'back in ' + (sched.interval >= 1 ? sched.interval + ' day' + (sched.interval === 1 ? '' : 's') : '10 minutes')
     : '';
+  const queued = next ? ` ${dueNow.length} due after this.` : '';
   setStatus(solved
-    ? `<b>Solved</b>${when ? ' — ' + when : ''}.`
-    : '<b>Not quite</b> — try again, or go back.');
+    ? `<b>Solved</b>${when ? ' — ' + when : ''}.${queued}`
+    : `<b>Not quite</b> — try again, or move on.${queued}`);
   renderPuzzles();
 }
 
@@ -1641,6 +1724,184 @@ function applyImport(text) {
   return merged;
 }
 
+/* ==========================================================================
+   Import real games from chess.com
+   ========================================================================== */
+
+const CC_API = 'https://api.chess.com/pub/player/';
+let importCancelled = false;
+
+function importNote(text, kind) {
+  const el = $('ccNote');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'setnote' + (kind ? ' ' + kind : '');
+}
+
+async function ccFetch(url) {
+  const res = await fetch(url);
+  if (res.status === 404) throw new Error('No chess.com player by that name.');
+  if (!res.ok) throw new Error(`chess.com returned ${res.status}.`);
+  return res.json();
+}
+
+/* Walk back through monthly archives, newest first, until we have enough. */
+async function ccRecentGames(username, wanted) {
+  const { archives } = await ccFetch(`${CC_API}${encodeURIComponent(username)}/games/archives`);
+  if (!archives || !archives.length) throw new Error('That account has no games on chess.com.');
+  const collected = [];
+  for (let i = archives.length - 1; i >= 0 && collected.length < wanted; i--) {
+    if (importCancelled) break;
+    const month = await ccFetch(archives[i]);
+    collected.push(...L.importableGames(month.games || [], username, wanted));
+    if (archives.length - i >= 6) break;          // don't trawl years of history
+  }
+  return L.importableGames(collected, username, wanted);
+}
+
+/* Run the same per-move analysis the live game uses, headless. */
+async function analyseImportedGame(game, username, onMove) {
+  const side = L.chessComSide(game, username);
+  const parser = new Chess();
+  if (!parser.load_pgn(game.pgn, { sloppy: true })) return null;
+
+  const sans = parser.history();
+  const board = new Chess();
+  const breakdown = [];
+  const depth = CFG.importDepth;
+
+  for (let ply = 0; ply < sans.length; ply++) {
+    if (importCancelled) return null;
+    const mine = (ply % 2 === 0) === (side === 'w');
+    if (!mine) { board.move(sans[ply]); continue; }
+
+    const fenBefore = board.fen();
+    const sansSoFar = board.history().concat([sans[ply]]);
+    const mv = board.move(sans[ply]);
+    if (!mv) break;
+
+    if (BOOK && BOOK.isBook(sansSoFar)) {
+      breakdown.push({ phase: L.phaseOf(fenBefore, ply), cls: 'Book', acc: null, cpLoss: 0, ms: null, hung: null, themes: [] });
+      onMove && onMove(ply, sans.length);
+      continue;
+    }
+
+    const before = await S.engine.search(fenBefore, { skill: 20, depth, multipv: 4 });
+    const over = board.game_over();
+    const fenAfter = board.fen();
+    const args = {
+      before, playedUci: mv.from + mv.to + (mv.promotion || ''),
+      gameOver: over, isCheckmate: board.in_checkmate(),
+      fenAfter, playedTo: mv.to, playedPiece: mv.piece, playedCaptured: mv.captured,
+    };
+    let res = L.scoreMove(args);
+    if (!res && !over) {
+      const after = await S.engine.search(fenAfter, { skill: 20, depth, multipv: 1 });
+      res = L.scoreMove(Object.assign({}, args, { afterSearch: after }));
+    }
+    onMove && onMove(ply, sans.length);
+    if (!res) continue;
+
+    const why = L.explainMove({
+      fenBefore, fenAfter, playedLine: res.playedLine, bestUci: res.bestUci,
+      cpLoss: res.cpLoss, cpBefore: res.cpBefore, cpAfterMine: res.cpAfterMine,
+      playedCaptured: mv.captured,
+    });
+    breakdown.push({
+      phase: L.phaseOf(fenBefore, ply), cls: res.cls.key, acc: res.accuracy,
+      cpLoss: res.cpLoss, ms: null, hung: why.hung || null,
+      themes: L.detectThemes({
+        mover: side, fenBefore, fenAfter, playedLine: res.playedLine, bestUci: res.bestUci,
+        cpLoss: res.cpLoss, cpBefore: res.cpBefore, cpAfterMine: res.cpAfterMine,
+        playedCaptured: mv.captured,
+      }),
+    });
+
+    // Real mistakes become puzzles, exactly as they do in a live game.
+    if (res.cls.key === 'Mistake' || res.cls.key === 'Blunder') {
+      const back = ply >= 4 ? 2 : 0;
+      const p = L.puzzleStart(sans, ply, back);
+      const list = loadPuzzles();
+      if (p && !list.some((x) => x.fenMistake === fenBefore)) {
+        list.push({
+          id: 'cc' + (game.end_time || Date.now()) + '_' + ply,
+          fenStart: p.fenStart, fenMistake: fenBefore, userMoves: p.userMoves,
+          line: sans.slice(p.startPly, ply),
+          playedSan: mv.san, cls: res.cls.key, cpLoss: Math.round(res.cpLoss),
+          bestSan: res.bestUci ? L.uciToSan(fenBefore, res.bestUci) : null,
+          created: (game.end_time || 0) * 1000 || Date.now(),
+          solves: 0, lapses: 0, interval: 0, due: Date.now(), retired: false,
+        });
+        savePuzzles(list);
+      }
+    }
+  }
+
+  const graded = breakdown.filter((b) => typeof b.acc === 'number');
+  if (!graded.length) return null;
+  return {
+    date: (game.end_time || 0) * 1000 || Date.now(),
+    accuracy: +(L.gameAccuracy(graded).toFixed(1)),
+    moves: graded.length,
+    retries: 0,
+    skill: `chess.com · ${game.time_class || 'game'}`,
+    result: L.chessComResult(game, username),
+    source: 'chess.com',
+    url: game.url || null,
+    breakdown,
+  };
+}
+
+async function runImport() {
+  const username = ($('ccUserInput') ? $('ccUserInput').value : CFG.ccUser || '').trim();
+  if (!username) { importNote('Enter your chess.com username first.', 'bad'); return; }
+  CFG.ccUser = username;
+  saveSettings();
+
+  importCancelled = false;
+  const btn = $('ccImport');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  const cancel = $('ccCancel');
+  if (cancel) cancel.hidden = false;
+
+  try {
+    importNote(`Looking up ${username}…`);
+    const games = await ccRecentGames(username, CFG.ccGames);
+    if (!games.length) { importNote('No standard games found for that account.', 'bad'); return; }
+
+    const existing = loadGames();
+    const known = new Set(existing.map((g) => g.date));
+    let added = 0;
+
+    for (let i = 0; i < games.length; i++) {
+      if (importCancelled) break;
+      const g = games[i];
+      if (known.has((g.end_time || 0) * 1000)) continue;      // already imported
+      importNote(`Analysing game ${i + 1} of ${games.length}…`);
+      const record = await analyseImportedGame(g, username, (ply, total) => {
+        importNote(`Analysing game ${i + 1} of ${games.length} — move ${Math.ceil((ply + 1) / 2)} of ${Math.ceil(total / 2)}…`);
+      });
+      if (record) {
+        const all = loadGames();
+        all.push(record);
+        all.sort((a, b) => a.date - b.date);
+        try { localStorage.setItem(STORE_KEY, JSON.stringify(all.slice(-100))); } catch (e) { /* quota */ }
+        added++;
+        renderProgress();
+        renderPuzzles();
+      }
+    }
+    importNote(importCancelled
+      ? `Stopped. ${added} game${added === 1 ? '' : 's'} imported.`
+      : `Done — ${added} game${added === 1 ? '' : 's'} analysed and added to your history.`, 'ok');
+  } catch (err) {
+    importNote(err.message, 'bad');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Import'; }
+    if (cancel) cancel.hidden = true;
+  }
+}
+
 function renderProgress() {
   const games = loadGames();
   const pane = $('pane-progress');
@@ -1702,6 +1963,31 @@ function renderSettings() {
       <div class="setlabel">Reset saved games<span class="setnote">Clears your accuracy history. Puzzles are kept.</span></div>
       <button class="btn" id="resetStats">Clear</button>
     </div>
+    <p class="ptitle" style="margin-top:16px">Your chess.com games</p>
+    <p class="setnote" style="margin:0 0 8px">Pulls your recent public games and runs the same review over them,
+       so your weaknesses and puzzles come from real opponents rather than the bot. Read-only, no password,
+       nothing is sent anywhere.</p>
+    <div class="setrow">
+      <div class="setlabel">Username<span class="setnote">Your chess.com handle.</span></div>
+      <input type="text" id="ccUserInput" placeholder="username" value="${(CFG.ccUser || '').replace(/"/g, '&quot;')}">
+    </div>
+    <div class="setrow">
+      <div class="setlabel">Games to import<span class="setnote">Each one takes roughly a minute to analyse.</span></div>
+      <select data-key="ccGames">${[3, 5, 10, 20].map((n) =>
+        `<option value="${n}" ${CFG.ccGames === n ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">Import depth<span class="setnote">Lower is faster and slightly less strict.</span></div>
+      <select data-key="importDepth">${[8, 10, 12].map((n) =>
+        `<option value="${n}" ${CFG.importDepth === n ? 'selected' : ''}>${n}${n === 10 ? ' — default' : ''}</option>`).join('')}</select>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">Run the import<span class="setnote" id="ccNote"></span></div>
+      <span class="rowbtns">
+        <button class="btn" id="ccCancel" hidden>Stop</button>
+        <button class="btn btn-primary" id="ccImport">Import</button>
+      </span>
+    </div>
     <p class="ptitle" style="margin-top:16px">Backup</p>
     <p class="setnote" style="margin:0 0 8px">Everything lives in this browser only — a different device, or clearing
        site data, starts from scratch. Export to move your history or keep a copy.</p>
@@ -1732,6 +2018,9 @@ function renderSettings() {
     try { localStorage.removeItem(STORE_KEY); } catch (e) { /* ignore */ }
     renderProgress();
   };
+
+  $('ccImport').onclick = runImport;
+  $('ccCancel').onclick = () => { importCancelled = true; importNote('Stopping after this move…'); };
 
   $('exportData').onclick = () => {
     const p = exportData();

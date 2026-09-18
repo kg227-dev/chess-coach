@@ -188,3 +188,62 @@ describe('weaknessReport tallies themes', () => {
     assert.equal(r.topTheme, null);
   });
 });
+
+describe('captureWinsMaterial', () => {
+  test('taking an undefended piece wins material', () => {
+    // Black bishop sits on a6 with nothing defending it; after bxa6 nothing recaptures.
+    assert.equal(L.captureWinsMaterial('4k3/8/B7/8/8/8/8/4K3 b - - 0 1', 'a6', 'b', 'p'), true);
+  });
+
+  test('an even trade is not winning material', () => {
+    // A knight took a knight on e5 and the d6 pawn can recapture: 3 for 3.
+    assert.equal(L.captureWinsMaterial('4k3/8/3p4/4N3/8/8/8/4K3 b - - 0 1', 'e5', 'n', 'n'), false);
+  });
+
+  test('taking a queen with a pawn wins material even if recaptured', () => {
+    assert.equal(L.captureWinsMaterial('4k3/8/8/4P3/3b4/8/8/4K3 b - - 0 1', 'e5', 'q', 'p'), true);
+  });
+
+  test('losing the exchange the other way is not a hang', () => {
+    // A knight took a pawn and the d4 bishop can recapture — we came out ahead.
+    assert.equal(L.captureWinsMaterial('4k3/8/8/4N3/3b4/8/8/4K3 b - - 0 1', 'e5', 'p', 'n'), false);
+  });
+
+  test('a pawn taken and recaptured is not a hang', () => {
+    assert.equal(L.captureWinsMaterial('4k3/8/3p4/4P3/8/8/8/4K3 b - - 0 1', 'e5', 'p', 'p'), false);
+  });
+
+  test('survives nonsense', () => {
+    assert.equal(L.captureWinsMaterial('garbage', 'e5', 'q', 'p'), false);
+    assert.equal(L.captureWinsMaterial('4k3/8/8/8/8/8/8/4K3 b - - 0 1', 'e5', null, 'p'), false);
+  });
+});
+
+describe('hanging theme only fires on real material loss', () => {
+  test('a plain recapture is not called a hanging piece', () => {
+    // 1.e4 d5 2.exd5 Qxd5 — Black recaptures; nobody hung anything.
+    const c = new Chess();
+    c.move('e4'); c.move('d5');
+    const fenBefore = c.fen();
+    c.move('exd5');
+    const themes = L.detectThemes({
+      mover: 'w', fenBefore, fenAfter: c.fen(),
+      playedLine: ['e4d5', 'd8d5'], bestUci: 'e4d5',
+      cpLoss: 120, cpBefore: 40, cpAfterMine: -80,
+    });
+    assert.ok(!themes.includes('hanging'), 'called a trade a hang: ' + themes.join(','));
+  });
+
+  test('a genuinely dropped bishop still counts', () => {
+    const c = new Chess();
+    c.move('e4'); c.move('e6');
+    const fenBefore = c.fen();
+    c.move({ from: 'f1', to: 'a6' });
+    const themes = L.detectThemes({
+      mover: 'w', fenBefore, fenAfter: c.fen(),
+      playedLine: ['f1a6', 'b7a6'], bestUci: 'd2d4',
+      cpLoss: 550, cpBefore: 100, cpAfterMine: -450,
+    });
+    assert.ok(themes.includes('hanging'), 'missed a real hang: ' + themes.join(','));
+  });
+});

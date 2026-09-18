@@ -149,6 +149,15 @@ function isLightSquare(sq) {
 
 var VALUE = { p: 1, n: 3, b: 3, r: 5, q: 9 };
 
+/* chess.js does not throw on a bad FEN — it just fails to load and leaves the
+   previous position in place. Always check the return value. */
+function loadFen(fen) {
+  try {
+    var c = new Chess();
+    return c.load(fen) ? c : null;
+  } catch (e) { return null; }
+}
+
 /* True when the moved piece (worth a knight or more) is left where the
    opponent can win material for less, and we can't win it back — i.e. a real
    offer, not a trade or a protected poke. */
@@ -615,21 +624,19 @@ function withTurn(fen, color) {
 
 /* Absolutely pinned: lift the piece and the king is left in check. */
 function isPinned(fen, square, color) {
-  try {
-    var c = new Chess(fen);
-    var piece = c.get(square);
-    if (!piece || piece.color !== color || piece.type === 'k') return false;
-    c.remove(square);
-    var probe = withTurn(c.fen(), color);
-    if (!probe) return false;
-    return new Chess(probe).in_check();
-  } catch (e) { return false; }
+  var c = loadFen(fen);
+  if (!c) return false;
+  var piece = c.get(square);
+  if (!piece || piece.color !== color || piece.type === 'k') return false;
+  c.remove(square);
+  var probe = loadFen(withTurn(c.fen(), color));
+  return probe ? probe.in_check() : false;
 }
 
 function pinnedSquares(fen, color) {
   var out = [];
-  var c;
-  try { c = new Chess(fen); } catch (e) { return out; }
+  var c = loadFen(fen);
+  if (!c) return out;
   var files = 'abcdefgh';
   for (var f = 0; f < 8; f++) {
     for (var r = 1; r <= 8; r++) {
@@ -643,14 +650,29 @@ function pinnedSquares(fen, color) {
 
 /* What the piece standing on `square` would attack if it moved again. */
 function attackedValuablesFrom(fen, square, byColor) {
+  var c = loadFen(withTurn(fen, byColor));
+  if (!c) return [];
   try {
-    var probe = withTurn(fen, byColor);
-    if (!probe) return [];
-    var c = new Chess(probe);
     return c.moves({ square: square, verbose: true })
       .filter(function (m) { return m.captured && (VALUE[m.captured] || 0) >= 3; })
       .map(function (m) { return m.to; });
   } catch (e) { return []; }
+}
+
+/* Did the capture actually win material, or was it just a trade? Compares what
+   was taken against the cheapest thing that can recapture. Without this, every
+   ordinary exchange looks like a hanging piece. */
+function captureWinsMaterial(fenAfterCapture, square, capturedType, attackerType) {
+  var capturedVal = VALUE[capturedType] || 0;
+  if (!capturedVal) return false;
+  var attackerVal = VALUE[attackerType] || 0;
+  var c = loadFen(fenAfterCapture);
+  if (!c) return false;
+  var recaptures = c.moves({ verbose: true }).filter(function (m) {
+    return m.to === square && m.captured;
+  });
+  if (!recaptures.length) return true;               // nothing answers it: material simply gone
+  return (capturedVal - attackerVal) > 0;            // still down after trading back
 }
 
 /* Name the tactic that actually beat you. Conservative on purpose: each theme
@@ -671,9 +693,11 @@ function detectThemes(o) {
       var c = new Chess(o.fenAfter);
       var r = applyUci(c, refutation);
       if (r) {
-        if (r.captured) themes.push('hanging');
-
         var fenAfterRefutation = c.fen();
+        if (r.captured && (VALUE[r.captured] || 0) >= 3
+            && captureWinsMaterial(fenAfterRefutation, r.to, r.captured, r.piece)) {
+          themes.push('hanging');
+        }
         var givesCheck = /[+#]$/.test(r.san);
         var hits = attackedValuablesFrom(fenAfterRefutation, r.to, opponent);
         if ((hits.length + (givesCheck ? 1 : 0)) >= 2) themes.push('fork');
@@ -890,6 +914,8 @@ var API = {
   THEME_LABELS: THEME_LABELS,
   detectThemes: detectThemes,
   isPinned: isPinned,
+  loadFen: loadFen,
+  captureWinsMaterial: captureWinsMaterial,
   pinnedSquares: pinnedSquares,
   withTurn: withTurn,
   BOT_LEVELS: BOT_LEVELS,
