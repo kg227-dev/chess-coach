@@ -578,6 +578,7 @@ async function beginUserTurn() {
 async function playUserMove(move) {
   if (S.mode === 'puzzle') return playPuzzleMove(move);
   if (S.mode === 'opening') return playTrainerMove(move);
+  if (S.mode === 'learn') return playLessonMove(move);
   const { from, to, promotion } = move;
   const thinkMs = S.turnStartedAt ? Math.round(performance.now() - S.turnStartedAt) : null;
   const ply = S.chess.history().length;
@@ -1086,49 +1087,113 @@ function capturePuzzle({ ply, mv, res, fenBefore }) {
   savePuzzles(list);
 }
 
+/* A puzzle is the position you actually went wrong in, with one move to find.
+   Earlier versions started two plies before the mistake and asked for several
+   moves, which meant staring at a quiet position with no stated goal. */
 function startPuzzle(rec) {
+  const fen = rec.fenMistake || rec.fenStart;      // older puzzles only have fenStart
+  const board = L.loadFen(fen);
+  if (!board) return;
+
+  stopLessonAuto();
   S.mode = 'puzzle';
-  S.puzzle = { rec, movesLeft: rec.userMoves, step: 0 };
-  S.chess = new Chess(rec.fenStart);
+  S.puzzle = { rec, fen, attempts: 0, revealed: false };
+  S.chess = board;
   S.me = S.chess.turn();
   S.flip = S.me === 'b';
   S.playing = true;
   S.locked = false;
   S.scored = {}; S.curve = []; S.retries = 0; S.retryAt = {}; S.revealed = {};
-  S.lastMove = null; S.resigned = false; S.flagged = null; S.opening = null;
+  S.lastMove = null; S.resigned = false; S.flagged = null;
   clearSelection(); clearArrows();
   $('gameover').hidden = true;
   $('promo').hidden = true;
   Clock.stop();
 
   buildBoard(); render(); renderMoves(); updateStats(); updateEvalBar(0);
+  document.querySelector('[data-tab="game"]').click();
+  renderPuzzlePrompt();
+}
 
+function puzzleContext(rec) {
+  const when = rec.created ? new Date(rec.created).toLocaleDateString() : null;
+  return when ? `From your game on ${when}` : 'From one of your games';
+}
+
+function renderPuzzlePrompt(message, kind) {
+  const { rec } = S.puzzle;
+  const side = S.me === 'w' ? 'White' : 'Black';
   $('review').innerHTML = `
-    <div class="review-title" style="margin-bottom:6px">Puzzle</div>
-    <div class="reason">You went wrong with <b>${rec.playedSan}</b>${
-      rec.userMoves > 1 ? ' a move from here' : ' in this position'}.
-      Play the next ${rec.userMoves} move${rec.userMoves > 1 ? 's' : ''} without repeating it.</div>`;
+    <div class="review-head">
+      <span class="badge" style="background:var(--c-book)">♟</span>
+      <div>
+        <div class="review-title">${side} to play</div>
+        <div class="review-sub">${puzzleContext(rec)} · you went wrong here</div>
+      </div>
+    </div>
+    <div class="reason">Find a move that doesn't give anything away.</div>
+    ${message ? `<div class="reason ${kind || 'bad-move'}">${message}</div>` : ''}
+    <div class="review-actions">
+      <button class="btn" id="pzShow">Show me</button>
+      <button class="btn" id="pzSkip">Skip</button>
+      <button class="btn btn-primary" id="pzExit">Exit</button>
+    </div>`;
   $('review').hidden = false;
 
-  document.querySelector('[data-tab="game"]').click();
-  setStatus(`<b>Puzzle</b> — you are ${S.me === 'w' ? 'White' : 'Black'}. Find the right plan.`);
+  $('pzShow').onclick = () => revealPuzzle();
+  $('pzSkip').onclick = () => goToNextPuzzle();
+  $('pzExit').onclick = () => { S.mode = 'game'; S.puzzle = null; $('review').hidden = true; clearArrows(); newGame(); };
+  setStatus(`<b>Puzzle</b> — ${side} to play.`);
+}
+
+function bestUciForPuzzle() {
+  const { rec, fen } = S.puzzle;
+  return rec.bestSan ? L.sanToUci(fen, rec.bestSan) : null;
+}
+
+function revealPuzzle() {
+  const { rec } = S.puzzle;
+  S.puzzle.revealed = true;
+  S.locked = true;
+  const best = bestUciForPuzzle();
+  if (best) drawArrows([{ uci: best, color: '#26c2a3', width: 0.14, opacity: 0.95 }]);
+  recordPuzzleOutcome(false);
+
+  $('review').innerHTML = `
+    <div class="review-head">
+      <span class="badge" style="background:var(--c-best)">★</span>
+      <div>
+        <div class="review-title">${rec.bestSan || 'The engine move'}</div>
+        <div class="review-sub">You played <b>${rec.playedSan}</b> here, which cost
+          ${(rec.cpLoss / 100).toFixed(1)} pawns.</div>
+      </div>
+    </div>
+    <div class="review-actions">
+      <button class="btn" id="pzRetry">Try it again</button>
+      ${nextPuzzle() ? '<button class="btn btn-primary" id="pzNext">Next puzzle →</button>' : ''}
+      <button class="btn${nextPuzzle() ? '' : ' btn-primary'}" id="pzExit">Exit</button>
+    </div>`;
+  $('review').hidden = false;
+  $('pzRetry').onclick = () => startPuzzle(rec);
+  const nx = $('pzNext');
+  if (nx) nx.onclick = () => goToNextPuzzle();
+  $('pzExit').onclick = () => { S.mode = 'game'; S.puzzle = null; $('review').hidden = true; clearArrows(); newGame(); };
+  setStatus(`<b>${rec.bestSan || 'Shown'}</b> was the move.`);
+  renderPuzzles();
 }
 
 async function playPuzzleMove({ from, to, promotion }) {
-  const fenBefore = S.chess.fen();
+  const { fen } = S.puzzle;
   const mv = S.chess.move({ from, to, promotion: promotion || 'q' });
   if (!mv) return;
 
   S.locked = true;
   S.lastMove = { from: mv.from, to: mv.to };
   clearSelection();
-  render();
-  if (!S.draggedMove) animateMove(mv.from, mv.to);
-  S.draggedMove = false;
-  renderMoves();
+  render(); renderMoves();
   setStatus('Checking…');
 
-  const before = await analyse(fenBefore, { multipv: 4 });
+  const before = await analyse(fen, { multipv: 4 });
   const over = S.chess.game_over();
   const args = {
     before, playedUci: mv.from + mv.to + (mv.promotion || ''),
@@ -1142,88 +1207,89 @@ async function playPuzzleMove({ from, to, promotion }) {
   }
   if (!res) { setStatus('No evaluation for that position.'); S.locked = false; return; }
 
-  // Fail only on a real mistake — plenty of reasonable moves exist on the way in.
-  if (res.cpLoss >= 100) return showPuzzleResult(false, mv, res, fenBefore);
+  S.puzzle.attempts++;
 
-  const script = S.puzzle.rec.line || [];
-  const scriptIdx = S.puzzle.step * 2;
-  const followedLine = script[scriptIdx] === mv.san;
-  S.puzzle.step++;
-  S.puzzle.movesLeft--;
-  if (S.puzzle.movesLeft <= 0 || over) return showPuzzleResult(true, mv, res, fenBefore);
-
-  setStatus('Good — the opponent replies.');
-  let replied = null;
-  if (followedLine && script[scriptIdx + 1]) {
-    replied = S.chess.move(script[scriptIdx + 1]);   // the reply from the real game
+  // "Doesn't give anything away" is Good or better — the same bar the rest of
+  // the app uses, rather than a hidden centipawn cutoff.
+  if (res.winDrop >= L.QUALITY_THRESHOLDS.good) {
+    S.chess.undo();
+    S.lastMove = null;
+    render(); renderMoves();
+    S.locked = false;
+    renderPuzzlePrompt(`<b>${mv.san}</b> still gives something up. Have another look.`);
+    setStatus('<b>Not that one</b> — try again.');
+    return;
   }
-  if (!replied) {
-    const r = await S.engine.search(S.chess.fen(), { skill: 20, movetime: 500, multipv: 1 });
-    if (r.bestmove) {
-      replied = S.chess.move({ from: r.bestmove.slice(0, 2), to: r.bestmove.slice(2, 4), promotion: r.bestmove[4] || 'q' });
-    }
-  }
-  if (replied) S.lastMove = { from: replied.from, to: replied.to };
-  render();
-  if (replied) animateMove(replied.from, replied.to);
-  renderMoves();
-  if (S.chess.game_over()) return showPuzzleResult(true, mv, res, fenBefore);
-  S.locked = false;
-  setStatus(`Your move — ${S.puzzle.movesLeft} to go.`);
+  return showPuzzleSolved(mv, res);
 }
 
-function showPuzzleResult(solved, mv, res, fenBefore) {
-  S.locked = true;
-  S.playing = false;
-  const rec = S.puzzle.rec;
+function nextPuzzle() {
+  const rec = S.puzzle && S.puzzle.rec;
+  const pool = loadPuzzles().filter((p) => (!rec || p.id !== rec.id) && !p.retired);
+  const due = L.dueList(pool, Date.now());
+  return due[0] || pool.slice().sort((a, b) => (a.due || 0) - (b.due || 0))[0] || null;
+}
 
+function goToNextPuzzle() {
+  const n = nextPuzzle();
+  if (n) return startPuzzle(n);
+  S.mode = 'game'; S.puzzle = null;
+  $('review').hidden = true;
+  clearArrows();
+  newGame();
+}
+
+function recordPuzzleOutcome(solved) {
+  const rec = S.puzzle && S.puzzle.rec;
+  if (!rec) return null;
   const list = loadPuzzles();
   const hit = list.find((x) => x.id === rec.id);
-  let sched = null;
-  if (hit) {
-    sched = L.scheduleReview(hit, solved);
-    Object.assign(hit, sched);
-    savePuzzles(list);
-  }
+  if (!hit) return null;
+  const sched = L.scheduleReview(hit, solved);
+  Object.assign(hit, sched);
+  savePuzzles(list);
+  return sched;
+}
 
-  const color = solved ? 'var(--c-best)' : 'var(--c-blunder)';
-  const bestSan = res.bestUci ? L.uciToSan(fenBefore, res.bestUci) : null;
+function showPuzzleSolved(mv, res) {
+  const { rec } = S.puzzle;
+  S.locked = true;
+  S.playing = false;
+  const sched = S.puzzle.revealed ? null : recordPuzzleOutcome(true);
 
-  // Queue up the next one so a session can keep rolling — due first, then
-  // whatever comes round soonest.
-  const pool = loadPuzzles().filter((p) => p.id !== rec.id && !p.retired);
-  const dueNow = L.dueList(pool, Date.now());
-  const next = dueNow[0] || pool.slice().sort((a, b) => (a.due || 0) - (b.due || 0))[0] || null;
+  const best = bestUciForPuzzle();
+  drawArrows([
+    { uci: mv.from + mv.to, color: 'var(--c-best)', width: 0.13, opacity: 0.9 },
+    ...(best && best !== mv.from + mv.to ? [{ uci: best, color: 'rgba(38,194,163,.5)', width: 0.12 }] : []),
+  ]);
+
+  const when = !sched ? null
+    : sched.retired ? 'Retired — you have this one.'
+    : `You'll see it again in ${sched.interval >= 1
+        ? sched.interval + ' day' + (sched.interval === 1 ? '' : 's')
+        : '10 minutes'}.`;
+  const n = nextPuzzle();
+
   $('review').innerHTML = `
     <div class="review-head">
-      <span class="badge" style="background:${color}">${solved ? '✓' : '✗'}</span>
+      <span class="badge" style="background:var(--c-best)">✓</span>
       <div>
-        <div class="review-title" style="color:${color}">${solved ? 'Solved' : 'Not quite'}</div>
-        <div class="review-sub">You played <b>${mv.san}</b> · ${
-          solved ? 'accurate' : 'gave up ' + (res.cpLoss / 100).toFixed(2) + ' pawns'}</div>
+        <div class="review-title" style="color:var(--c-best)">${mv.san} works</div>
+        <div class="review-sub">You played <b>${rec.playedSan}</b> here, which cost
+          ${(rec.cpLoss / 100).toFixed(1)} pawns${
+            rec.bestSan && rec.bestSan !== mv.san ? ` · the engine likes <b>${rec.bestSan}</b>` : ''}.</div>
       </div>
     </div>
-    ${!solved && bestSan ? `<div class="reason answer">Best was ${bestSan}.</div>` : ''}
+    ${when ? `<div class="reason">${when}</div>` : ''}
     <div class="review-actions">
-      <button class="btn" id="pzRetry">Try again</button>
-      ${next ? '<button class="btn btn-primary" id="pzNext">Next puzzle →</button>' : ''}
-      <button class="btn${next ? '' : ' btn-primary'}" id="pzDone">Back to a game</button>
+      ${n ? '<button class="btn btn-primary" id="pzNext">Next puzzle →</button>' : ''}
+      <button class="btn${n ? '' : ' btn-primary'}" id="pzExit">Back to a game</button>
     </div>`;
   $('review').hidden = false;
-
-  if (!solved && res.bestUci) drawArrows([{ uci: res.bestUci, color: '#26c2a3', width: 0.14 }]);
-
-  $('pzRetry').onclick = () => startPuzzle(rec);
-  const nextBtn = $('pzNext');
-  if (nextBtn) nextBtn.onclick = () => startPuzzle(next);
-  $('pzDone').onclick = () => { $('review').hidden = true; clearArrows(); newGame(); };
-  const when = sched && sched.retired ? 'retired — you have this one'
-    : sched ? 'back in ' + (sched.interval >= 1 ? sched.interval + ' day' + (sched.interval === 1 ? '' : 's') : '10 minutes')
-    : '';
-  const queued = next ? ` ${dueNow.length} due after this.` : '';
-  setStatus(solved
-    ? `<b>Solved</b>${when ? ' — ' + when : ''}.${queued}`
-    : `<b>Not quite</b> — try again, or move on.${queued}`);
+  const nx = $('pzNext');
+  if (nx) nx.onclick = () => goToNextPuzzle();
+  $('pzExit').onclick = () => { S.mode = 'game'; S.puzzle = null; $('review').hidden = true; clearArrows(); newGame(); };
+  setStatus(`<b>Solved</b> — ${mv.san}.${n ? ' Another one is waiting.' : ''}`);
   renderPuzzles();
 }
 
@@ -1242,7 +1308,7 @@ function renderPuzzles() {
   if (!pane) return;
   const all = loadPuzzles();
   if (!all.length) {
-    pane.innerHTML = '<div class="empty">No puzzles yet. Every mistake or blunder you make is saved here automatically, set two moves earlier so you have to see it coming.</div>';
+    pane.innerHTML = '<div class="empty">No puzzles yet. Every mistake and blunder you make is saved here as a puzzle — the position you went wrong in, with one move to find. Play a game, or import your chess.com games from Settings.</div>';
     return;
   }
   const now = Date.now();
@@ -1259,15 +1325,15 @@ function renderPuzzles() {
       <div class="accbox"><span class="acclabel">Learning</span><span class="accvalue small">${active.length}</span></div>
       <div class="accbox"><span class="acclabel">Retired</span><span class="accvalue small">${retired.length}</span></div>
     </div>
-    ${due.length ? '<button class="btn btn-primary" id="reviewNext" style="width:100%;margin-bottom:10px">Review next due</button>' : ''}
+    ${due.length ? '<button class="btn btn-primary" id="reviewNext" style="width:100%;margin-bottom:10px">Solve next due</button>' : ''}
     <p class="ptitle">From your own games</p>
     ` + ordered.map((p) => `
     <div class="gamerow${p.retired ? ' retired' : ''}">
       <div>
-        <div><span style="color:${CLS_COLOR[p.cls]}">${p.cls}</span> — you played ${p.playedSan} (−${(p.cpLoss / 100).toFixed(1)})</div>
+        <div><span style="color:${CLS_COLOR[p.cls]}">${p.cls}</span> — cost you ${(p.cpLoss / 100).toFixed(1)} pawns</div>
         <div class="date">${dueLabel(p, now)} · solved ${p.solves || 0}× · missed ${p.lapses || 0}×</div>
       </div>
-      <button class="btn" data-puzzle="${p.id}">${p.retired ? 'Replay' : 'Start'}</button>
+      <button class="btn" data-puzzle="${p.id}">${p.retired ? 'Replay' : 'Solve'}</button>
     </div>`).join('');
 
   const next = $('reviewNext');
@@ -1295,7 +1361,8 @@ function saveOpeningStats(stats) {
    Walkthrough — see the line played before you have to recall it
    ========================================================================== */
 
-const LESSON_PACE = 1600;
+const LESSON_PACE = 1500;
+const REPLY_PAUSE = 750;
 
 function stopLessonAuto() {
   if (S.lesson && S.lesson.timer) { clearTimeout(S.lesson.timer); S.lesson.timer = null; }
@@ -1304,11 +1371,11 @@ function stopLessonAuto() {
 function startLesson(line) {
   stopLessonAuto();
   S.mode = 'learn';
-  S.lesson = { line, idx: 0, auto: false, timer: null };
+  S.lesson = { line, idx: 0, auto: false, timer: null, wrong: null };
   S.chess = new Chess();
   S.me = line.side;
   S.flip = line.side === 'b';
-  S.playing = false;            // a walkthrough takes no input
+  S.playing = true;             // you play your own moves here, following the arrow
   S.locked = true;
   S.scored = {}; S.curve = []; S.retries = 0;
   S.lastMove = null; S.resigned = false; S.flagged = null;
@@ -1319,24 +1386,36 @@ function startLesson(line) {
 
   buildBoard(); render(); renderMoves(); updateStats(); updateEvalBar(0);
   document.querySelector('[data-tab="game"]').click();
-  renderLesson();
+  lessonAdvance();
 }
 
-// Rebuild the position from the start — used when stepping backwards.
-function lessonRewindTo(idx) {
-  const { line } = S.lesson;
-  S.chess = new Chess();
-  for (let i = 0; i < idx; i++) S.chess.move(line.moves[i]);
-  S.lesson.idx = idx;
-  S.lastMove = null;
-  render(); renderMoves();
-  renderLesson();
-}
-
-function lessonNext() {
+/* Hand the board over when it is your move, play the reply yourself otherwise. */
+function lessonAdvance() {
+  stopLessonAuto();
+  if (!S.lesson) return;
   const { line, idx } = S.lesson;
-  if (idx >= line.moves.length) return;
-  const mv = S.chess.move(line.moves[idx]);
+  if (idx >= line.moves.length) { S.locked = true; renderLesson(); return; }
+
+  const whiteToMove = idx % 2 === 0;
+  const isUser = whiteToMove === (line.side === 'w');
+
+  if (isUser) {
+    S.locked = false;                       // your turn: make the move yourself
+    renderLesson();
+    if (S.lesson.auto) S.lesson.timer = setTimeout(lessonPlayExpected, LESSON_PACE);
+  } else {
+    S.locked = true;
+    renderLesson();
+    S.lesson.timer = setTimeout(lessonPlayExpected, S.lesson.auto ? LESSON_PACE : REPLY_PAUSE);
+  }
+}
+
+function lessonPlayExpected() {
+  if (!S.lesson) return;
+  const { line, idx } = S.lesson;
+  const san = line.moves[idx];
+  if (!san) return;
+  const mv = S.chess.move(san);
   if (mv) {
     S.lastMove = { from: mv.from, to: mv.to };
     render();
@@ -1344,31 +1423,69 @@ function lessonNext() {
     renderMoves();
   }
   S.lesson.idx++;
-  renderLesson();
-  if (S.lesson.auto) {
-    if (S.lesson.idx >= line.moves.length) S.lesson.auto = false;
-    else S.lesson.timer = setTimeout(lessonNext, LESSON_PACE);
+  S.lesson.wrong = null;
+  lessonAdvance();
+}
+
+function playLessonMove({ from, to, promotion }) {
+  if (!S.lesson) return;
+  const { line, idx } = S.lesson;
+  const expected = line.moves[idx];
+  const mv = S.chess.move({ from, to, promotion: promotion || 'q' });
+  if (!mv) return;
+
+  if (mv.san !== expected) {
+    S.chess.undo();                         // the wrong move never enters the line
+    S.lesson.wrong = mv.san;
+    S.draggedMove = false;
+    clearSelection(); render();
+    renderLesson();
+    return;
   }
+
+  S.lesson.wrong = null;
+  S.lastMove = { from: mv.from, to: mv.to };
+  S.lesson.idx++;
+  clearSelection();
+  render();
+  if (!S.draggedMove) animateMove(mv.from, mv.to);
+  S.draggedMove = false;
+  renderMoves();
+  S.locked = true;
+  lessonAdvance();
+}
+
+function lessonRewindTo(idx) {
+  stopLessonAuto();
+  const { line } = S.lesson;
+  S.chess = new Chess();
+  for (let i = 0; i < idx; i++) S.chess.move(line.moves[i]);
+  S.lesson.idx = idx;
+  S.lesson.wrong = null;
+  S.lastMove = null;
+  render(); renderMoves();
+  lessonAdvance();
 }
 
 function renderLesson() {
-  const { line, idx, auto } = S.lesson;
+  const { line, idx, auto, wrong } = S.lesson;
   const total = line.moves.length;
   const done = idx >= total;
   const nextSan = done ? null : line.moves[idx];
   const fen = S.chess.fen();
+  const whiteToMove = idx % 2 === 0;
+  const yours = !done && (whiteToMove === (line.side === 'w'));
 
-  // Arrow for the move that is about to be played.
+  // The arrow is the whole point — it shows the move you are about to make.
   if (nextSan) {
     const uci = L.sanToUci(fen, nextSan);
-    drawArrows(uci ? [{ uci, color: '#26c2a3', width: 0.14, opacity: 0.95 }] : []);
+    drawArrows(uci ? [{ uci, color: yours ? '#26c2a3' : 'rgba(163,173,142,.75)', width: 0.14, opacity: 0.95 }] : []);
   } else {
     clearArrows();
   }
 
-  const yours = !done && ((idx % 2 === 0) === (line.side === 'w'));
   const caption = done
-    ? 'That is the whole line. Now play it from memory.'
+    ? 'That is the whole line. Now play it without the arrows.'
     : L.describeMove(fen, nextSan);
 
   $('review').innerHTML = `
@@ -1381,26 +1498,28 @@ function renderLesson() {
     </div>
     ${line.idea ? `<div class="reason">${line.idea}</div>` : ''}
     <div class="trainbar"><i style="width:${Math.round((idx / total) * 100)}%"></i></div>
+    ${wrong ? `<div class="reason bad-move"><b>${wrong}</b> isn't the move — follow the arrow.</div>` : ''}
     <div class="lessonstep${done ? ' finished' : ''}">
-      ${done ? '' : `<span class="who">${yours ? 'Your move' : 'Their reply'}</span>`}
+      ${done ? '' : `<span class="who">${yours ? 'Play this move yourself' : 'Their reply'}</span>`}
       ${caption}
     </div>
     <div class="review-actions">
       ${idx > 0 ? '<button class="btn" id="lsBack">← Back</button>' : ''}
-      ${done ? '' : `<button class="btn" id="lsAuto">${auto ? 'Pause' : 'Play through'}</button>`}
-      ${done ? '' : '<button class="btn" id="lsNext">Next →</button>'}
+      ${done ? '' : `<button class="btn" id="lsAuto">${auto ? 'Pause' : 'Watch it'}</button>`}
+      ${done || !yours ? '' : '<button class="btn" id="lsSkip">Skip</button>'}
       <button class="btn btn-primary" id="lsTrain">${done ? 'Practice it from memory' : 'Skip to practice'}</button>
     </div>`;
   $('review').hidden = false;
 
   const back = $('lsBack');
-  if (back) back.onclick = () => { stopLessonAuto(); S.lesson.auto = false; lessonRewindTo(Math.max(0, idx - 1)); };
-  const next = $('lsNext');
-  if (next) next.onclick = () => { stopLessonAuto(); S.lesson.auto = false; lessonNext(); };
+  if (back) back.onclick = () => { S.lesson.auto = false; lessonRewindTo(Math.max(0, idx - 1)); };
+  const skip = $('lsSkip');
+  if (skip) skip.onclick = () => { S.lesson.auto = false; lessonPlayExpected(); };
   const autoBtn = $('lsAuto');
   if (autoBtn) autoBtn.onclick = () => {
-    if (S.lesson.auto) { stopLessonAuto(); S.lesson.auto = false; renderLesson(); }
-    else { S.lesson.auto = true; renderLesson(); lessonNext(); }
+    S.lesson.auto = !S.lesson.auto;
+    if (S.lesson.auto) { renderLesson(); S.lesson.timer = setTimeout(lessonPlayExpected, 400); }
+    else { stopLessonAuto(); renderLesson(); }
   };
   $('lsTrain').onclick = () => {
     stopLessonAuto();
@@ -1410,8 +1529,10 @@ function renderLesson() {
   };
 
   setStatus(done
-    ? `<b>${line.name}</b> — walkthrough complete.`
-    : `<b>${line.name}</b> — watch the arrow.`);
+    ? `<b>${line.name}</b> — tutorial complete.`
+    : yours
+      ? `<b>${line.name}</b> — play the move the arrow shows.`
+      : `<b>${line.name}</b> — watch the reply.`);
 }
 
 function markOpeningSeen(name) {

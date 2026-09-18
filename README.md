@@ -62,9 +62,10 @@ backup merging and bot move selection.
 - **Play a bot** at seven strengths from Beginner (~800) to full strength, with
   a clock (10 minutes a side by default).
 - **Opening trainer** — 20 mainline openings, ten for each colour, each with a
-  **Tutorial** and a **Practice** mode. The tutorial draws an arrow for the next
-  move, says plainly what it does, and steps or auto-plays through the whole
-  line. Practice then has you play your side from memory, refusing wrong moves
+  **Tutorial** and a **Practice** mode. In the tutorial you play the moves
+  yourself following an arrow, so the line goes into your hands and not just
+  your eyes; the opponent replies automatically, and **Watch it** plays the
+  whole line through if you'd rather just see it first. Practice then has you play your side from memory, refusing wrong moves
   rather than letting them into the line, with the answer after two slips or on
   request. Openings you've seen default to Practice, ones you haven't default to
   Tutorial, and you can jump back to the tutorial from inside practice.
@@ -84,11 +85,12 @@ backup merging and bot move selection.
   is marked *Book* and left out of your accuracy — the engine preferring one
   normal developing move over another says nothing about how you played. A
   64-line book covers what a club player actually reaches.
-- **Puzzles from your own mistakes.** Every mistake and blunder is saved
-  automatically, set **two plies earlier** so you have to see it coming instead
-  of being handed the critical position. Replaying your original move makes the
-  opponent answer with the move it actually played, so the exact position comes
-  back; deviate and the engine takes over.
+- **Puzzles from your own mistakes.** Every mistake and blunder is saved as a
+  puzzle: the position you actually went wrong in, one move to find, with the
+  side to move and the goal stated plainly. The pass mark is the same bar the
+  rest of the app uses — a move that gives nothing away (Good or better). Solve
+  it and you're told what you originally played and what it cost; **Show me**
+  reveals the engine's choice. Solved puzzles chain straight into the next due.
 - **Captured pieces and material lead** under each player, chess.com style.
 - **Post-game review** — eval graph over the whole game, a count of each move
   quality, and your biggest mistakes with the reason for each.
