@@ -430,3 +430,16 @@ html, body {
   color: var(--c-best); background: rgba(38,194,163,.13);
   border-radius: 3px; padding: 1px 5px; margin-left: 6px;
 }
+.wbar i.theme { background: var(--c-mistake); }
+
+/* ---------- walkthrough ---------- */
+.lessonstep {
+  background: var(--panel); border-radius: 5px; padding: 9px 11px;
+  font-size: 13px; margin-top: 8px; line-height: 1.5;
+}
+.lessonstep.finished { border-left: 3px solid var(--c-best); }
+.lessonstep .who {
+  display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .6px;
+  color: var(--muted); margin-bottom: 2px;
+}
+.rowbtns { display: flex; gap: 6px; }

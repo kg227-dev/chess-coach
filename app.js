@@ -155,9 +155,10 @@ const S = {
   legal: [],
   drag: null,
   pendingPromo: null,
-  mode: 'game',      // 'game' | 'puzzle' | 'opening'
+  mode: 'game',      // 'game' | 'puzzle' | 'opening' | 'learn'
   puzzle: null,
   trainer: null,
+  lesson: null,
   opening: null,
 };
 
@@ -521,7 +522,8 @@ async function newGame() {
   S.botLevel = $('botLevel').value;
   S.reviewMode = $('reviewMode').value;
 
-  S.mode = 'game'; S.puzzle = null; S.trainer = null; S.opening = null;
+  stopLessonAuto();
+  S.mode = 'game'; S.puzzle = null; S.trainer = null; S.lesson = null; S.opening = null;
   S.chess = new Chess();
   S.scored = {}; S.curve = []; S.retries = 0; S.retryAt = {}; S.revealed = {};
   S.lastMove = null; S.pre = null; S.preFen = null;
@@ -636,6 +638,12 @@ async function playUserMove(move) {
       bestSan: res.bestUci ? L.uciToSan(fenBefore, res.bestUci) : null,
       phase: L.phaseOf(fenBefore, ply),
       hung: why.hung || null,
+      themes: L.detectThemes({
+        mover: S.me, fenBefore, fenAfter,
+        playedLine: res.playedLine, bestUci: res.bestUci,
+        cpLoss: res.cpLoss, cpBefore: res.cpBefore, cpAfterMine: res.cpAfterMine,
+        playedCaptured: mv.captured,
+      }),
     };
     if (res.cls.key === 'Mistake' || res.cls.key === 'Blunder') {
       capturePuzzle({ ply, mv, res, fenBefore });
@@ -799,7 +807,8 @@ function endGame() {
       retries: S.retries, skill: L.botLevel(S.botLevel).label, result: title,
       breakdown: Object.keys(S.scored).sort((a, b) => a - b).map((k) => {
         const r = S.scored[k];
-        return { phase: r.phase, cls: r.cls, acc: r.acc, cpLoss: r.cpLoss, hung: r.hung || null };
+        return { phase: r.phase, cls: r.cls, acc: r.acc, cpLoss: r.cpLoss,
+                 hung: r.hung || null, themes: r.themes || [] };
       }),
     });
     renderProgress();
@@ -1137,7 +1146,140 @@ function saveOpeningStats(stats) {
   try { localStorage.setItem(OPENING_KEY, JSON.stringify(stats)); } catch (e) { /* quota */ }
 }
 
+/* ==========================================================================
+   Walkthrough — see the line played before you have to recall it
+   ========================================================================== */
+
+const LESSON_PACE = 1600;
+
+function stopLessonAuto() {
+  if (S.lesson && S.lesson.timer) { clearTimeout(S.lesson.timer); S.lesson.timer = null; }
+}
+
+function startLesson(line) {
+  stopLessonAuto();
+  S.mode = 'learn';
+  S.lesson = { line, idx: 0, auto: false, timer: null };
+  S.chess = new Chess();
+  S.me = line.side;
+  S.flip = line.side === 'b';
+  S.playing = false;            // a walkthrough takes no input
+  S.locked = true;
+  S.scored = {}; S.curve = []; S.retries = 0;
+  S.lastMove = null; S.resigned = false; S.flagged = null;
+  clearSelection(); clearArrows();
+  $('gameover').hidden = true;
+  $('promo').hidden = true;
+  Clock.stop();
+
+  buildBoard(); render(); renderMoves(); updateStats(); updateEvalBar(0);
+  document.querySelector('[data-tab="game"]').click();
+  renderLesson();
+}
+
+// Rebuild the position from the start — used when stepping backwards.
+function lessonRewindTo(idx) {
+  const { line } = S.lesson;
+  S.chess = new Chess();
+  for (let i = 0; i < idx; i++) S.chess.move(line.moves[i]);
+  S.lesson.idx = idx;
+  S.lastMove = null;
+  render(); renderMoves();
+  renderLesson();
+}
+
+function lessonNext() {
+  const { line, idx } = S.lesson;
+  if (idx >= line.moves.length) return;
+  const mv = S.chess.move(line.moves[idx]);
+  if (mv) {
+    S.lastMove = { from: mv.from, to: mv.to };
+    render();
+    animateMove(mv.from, mv.to);
+    renderMoves();
+  }
+  S.lesson.idx++;
+  renderLesson();
+  if (S.lesson.auto) {
+    if (S.lesson.idx >= line.moves.length) S.lesson.auto = false;
+    else S.lesson.timer = setTimeout(lessonNext, LESSON_PACE);
+  }
+}
+
+function renderLesson() {
+  const { line, idx, auto } = S.lesson;
+  const total = line.moves.length;
+  const done = idx >= total;
+  const nextSan = done ? null : line.moves[idx];
+  const fen = S.chess.fen();
+
+  // Arrow for the move that is about to be played.
+  if (nextSan) {
+    const uci = L.sanToUci(fen, nextSan);
+    drawArrows(uci ? [{ uci, color: '#26c2a3', width: 0.14, opacity: 0.95 }] : []);
+  } else {
+    clearArrows();
+  }
+
+  const yours = !done && ((idx % 2 === 0) === (line.side === 'w'));
+  const caption = done
+    ? 'That is the whole line. Now play it from memory.'
+    : L.describeMove(fen, nextSan);
+
+  $('review').innerHTML = `
+    <div class="review-head">
+      <span class="badge" style="background:var(--c-book)">👁</span>
+      <div>
+        <div class="review-title">${line.name}</div>
+        <div class="review-sub">Walkthrough · ${Math.min(idx + 1, total)} of ${total} half-moves</div>
+      </div>
+    </div>
+    ${line.idea ? `<div class="reason">${line.idea}</div>` : ''}
+    <div class="trainbar"><i style="width:${Math.round((idx / total) * 100)}%"></i></div>
+    <div class="lessonstep${done ? ' finished' : ''}">
+      ${done ? '' : `<span class="who">${yours ? 'Your move' : 'Their reply'}</span>`}
+      ${caption}
+    </div>
+    <div class="review-actions">
+      ${idx > 0 ? '<button class="btn" id="lsBack">← Back</button>' : ''}
+      ${done ? '' : `<button class="btn" id="lsAuto">${auto ? 'Pause' : 'Play through'}</button>`}
+      ${done ? '' : '<button class="btn" id="lsNext">Next →</button>'}
+      <button class="btn btn-primary" id="lsTrain">${done ? 'Try it from memory' : 'Skip to training'}</button>
+    </div>`;
+  $('review').hidden = false;
+
+  const back = $('lsBack');
+  if (back) back.onclick = () => { stopLessonAuto(); S.lesson.auto = false; lessonRewindTo(Math.max(0, idx - 1)); };
+  const next = $('lsNext');
+  if (next) next.onclick = () => { stopLessonAuto(); S.lesson.auto = false; lessonNext(); };
+  const autoBtn = $('lsAuto');
+  if (autoBtn) autoBtn.onclick = () => {
+    if (S.lesson.auto) { stopLessonAuto(); S.lesson.auto = false; renderLesson(); }
+    else { S.lesson.auto = true; renderLesson(); lessonNext(); }
+  };
+  $('lsTrain').onclick = () => {
+    stopLessonAuto();
+    markOpeningSeen(line.name);
+    S.lesson = null;
+    startTrainer(line);
+  };
+
+  setStatus(done
+    ? `<b>${line.name}</b> — walkthrough complete.`
+    : `<b>${line.name}</b> — watch the arrow.`);
+}
+
+function markOpeningSeen(name) {
+  const stats = loadOpeningStats();
+  const rec = stats[name] || { attempts: 0, completions: 0, bestMisses: null, lastPlayed: 0 };
+  rec.seen = true;
+  stats[name] = rec;
+  saveOpeningStats(stats);
+}
+
 function startTrainer(line) {
+  stopLessonAuto();
+  markOpeningSeen(line.name);
   S.mode = 'opening';
   S.trainer = { line, idx: 0, misses: 0, totalMisses: 0, revealed: false, wrong: null };
   S.chess = new Chess();
@@ -1292,6 +1434,7 @@ function renderOpenings() {
   const stats = loadOpeningStats();
   const group = (side) => BOOK.TRAINER.filter((l) => l.side === side).map((l) => {
     const r = stats[l.name];
+    const seen = !!(r && (r.seen || r.completions > 0));
     const sub = r
       ? `done ${r.completions}× · best ${r.bestMisses} slip${r.bestMisses === 1 ? '' : 's'}`
       : `${Math.ceil(l.moves.length / 2)} moves to learn`;
@@ -1300,7 +1443,10 @@ function renderOpenings() {
         <div>${l.name}${r && r.bestMisses === 0 ? ' <span class="perfect">clean</span>' : ''}</div>
         <div class="date">${sub}</div>
       </div>
-      <button class="btn" data-open="${l.name}">Train</button>
+      <span class="rowbtns">
+        <button class="btn${seen ? '' : ' btn-primary'}" data-learn="${l.name}">Learn</button>
+        <button class="btn${seen ? ' btn-primary' : ''}" data-open="${l.name}">Train</button>
+      </span>
     </div>`;
   }).join('');
 
@@ -1317,6 +1463,12 @@ function renderOpenings() {
     b.onclick = () => {
       const line = BOOK.TRAINER.find((l) => l.name === b.dataset.open);
       if (line) startTrainer(line);
+    };
+  });
+  pane.querySelectorAll('[data-learn]').forEach((b) => {
+    b.onclick = () => {
+      const line = BOOK.TRAINER.find((l) => l.name === b.dataset.learn);
+      if (line) startLesson(line);
     };
   });
 }
@@ -1356,14 +1508,30 @@ function weaknessHTML() {
   const hungChips = hungKeys.map((k) =>
     `<span class="chip"><i style="background:var(--c-blunder)"></i>${rep.hung[k]}× ${L.PIECE_NAME[k]}</span>`).join('');
 
-  const verdict = rep.weakestPhase
-    ? `Your ${rep.weakestPhase} is costing you the most${
-        rep.mostHungPiece ? `, and the piece you drop most often is your ${L.PIECE_NAME[rep.mostHungPiece]}` : ''}.`
-    : 'Not enough moves yet to call out a weakest phase.';
+  const themeKeys = Object.keys(rep.themes).sort((a, b) => rep.themes[b] - rep.themes[a]);
+  const themeRows = themeKeys.map((k) => {
+    const share = Math.round((rep.themes[k] / Math.max(1, rep.themes[themeKeys[0]])) * 100);
+    return `<div class="wrow">
+      <div class="wtop">
+        <span class="wlabel">${L.THEME_LABELS[k] || k}</span>
+        <span class="wval">${rep.themes[k]}×</span>
+      </div>
+      <span class="wbar"><i class="theme" style="width:${Math.max(4, share)}%"></i></span>
+    </div>`;
+  }).join('');
+
+  const verdict = rep.topTheme
+    ? `You lose most to <b>${(L.THEME_LABELS[rep.topTheme] || rep.topTheme).toLowerCase()}</b>${
+        rep.weakestPhase ? `, mostly in the ${rep.weakestPhase}` : ''}${
+        rep.mostHungPiece ? `. The piece you drop most often is your ${L.PIECE_NAME[rep.mostHungPiece]}` : ''}.`
+    : (rep.weakestPhase
+      ? `Your ${rep.weakestPhase} is costing you the most.`
+      : 'Not enough moves yet to call out a weakness.');
 
   return `<p class="ptitle">Where you lose value</p>
     <div class="reason">${verdict}</div>
     ${rows}
+    ${themeRows ? `<p class="ptitle" style="margin-top:14px">What beats you</p>${themeRows}` : ''}
     ${hungChips ? `<p class="ptitle" style="margin-top:14px">Pieces you hang</p><div class="chips">${hungChips}</div>` : ''}
     <p class="wfoot">From ${rep.gamesWithData} game${rep.gamesWithData === 1 ? '' : 's'} with move-by-move data · ${rep.total.moves} graded moves.</p>`;
 }

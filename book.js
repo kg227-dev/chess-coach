@@ -122,6 +122,29 @@ function openingName(sans) {
 /* Twenty mainline openings worth knowing by heart, ten for each colour.
    `side` is the colour you are drilling; the app plays the other side.
    Every line is validated legal by the test suite. */
+var IDEAS = {
+  "Italian Game": "The bishop on c4 eyes f7 while White builds a big centre with c3 and d4.",
+  "Ruy Lopez, Closed": "White pressures c6, the defender of e5, then develops slowly behind a solid centre.",
+  "Scotch Game": "White opens the centre at once with d4 rather than the slower Italian build-up.",
+  "Queen's Gambit Declined": "Black holds the centre with e6, accepting a passive bishop for a solid structure.",
+  "London System": "White plays the same setup against almost anything, bishop outside the pawn chain.",
+  "English, Symmetrical": "A flank opening: White fights for d5 from the side instead of occupying the centre.",
+  "Vienna Game": "White delays Nf3 so the f-pawn is free to come forward.",
+  "King's Gambit": "White offers the f-pawn for fast development and a broad centre.",
+  "Catalan Opening": "White fianchettos to press down the long diagonal at Black's queenside.",
+  "Smith-Morra Gambit": "White gives a pawn for quick development and open c- and d-files.",
+  "Sicilian, Najdorf": "a6 takes b5 away from White's pieces before Black commits anything else.",
+  "Sicilian, Dragon": "Black fianchettos on g7 to fire down the long diagonal at White's queenside.",
+  "French, Winawer": "Black pins the knight on c3 and trades it off, damaging White's pawns.",
+  "Caro-Kann, Classical": "Black develops the light-squared bishop outside the pawn chain before playing e6.",
+  "King's Indian Defence": "Black lets White build a big centre, then strikes back at it with e5.",
+  "Nimzo-Indian Defence": "Black pins the knight on c3 to fight for control of e4.",
+  "Slav Defence": "Black supports d5 with c6, keeping the light-squared bishop's path clear.",
+  "Scandinavian Defence": "Black trades centre pawns immediately and brings the queen to a5.",
+  "Petrov Defence": "Black copies White's setup, heading for symmetry and equality.",
+  "Grünfeld Defence": "Black hands White a big pawn centre, then attacks it from the flank."
+};
+
 var TRAINER = [
   // --- White ---
   ['Italian Game',            'w', 'e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6 d4 exd4 cxd4 Bb4+'],
@@ -146,7 +169,7 @@ var TRAINER = [
   ['Scandinavian Defence',    'b', 'e4 d5 exd5 Qxd5 Nc3 Qa5 d4 Nf6 Nf3 c6 Bc4 Bf5'],
   ['Petrov Defence',          'b', 'e4 e5 Nf3 Nf6 Nxe5 d6 Nf3 Nxe4 d4 d5 Bd3 Nc6'],
   ['Grünfeld Defence',        'b', 'd4 Nf6 c4 g6 Nc3 d5 cxd5 Nxd5 e4 Nxc3 bxc3 Bg7'],
-].map(function (t) { return { name: t[0], side: t[1], moves: t[2].split(' ') }; });
+].map(function (t) { return { name: t[0], side: t[1], moves: t[2].split(' '), idea: IDEAS[t[0]] || '' }; });
 
 /* Whose move it is at `idx`, and what it has to be. Lines always start with a
    white move, so a black drill means the user plays the odd plies. */

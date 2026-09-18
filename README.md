@@ -53,17 +53,20 @@ registered over https only, so `localhost` stays uncached while you're editing.
 cd /Users/kushgulati/Desktop/chess-coach && npm test
 ```
 
-185 unit tests covering scoring, board geometry, the opening book and trainer
-lines, game phases, spaced repetition, weakness aggregation, backup merging and
-bot move selection.
+208 unit tests covering scoring, board geometry, the opening book and trainer
+lines, game phases, spaced repetition, weakness aggregation, tactical themes,
+backup merging and bot move selection.
 
 ## What it does
 
 - **Play a bot** at seven strengths from Beginner (~800) to full strength, with
   a clock (10 minutes a side by default).
-- **Opening trainer** — drill 20 mainline openings, ten for each colour. The app
-  plays the other side; you play yours from memory. A wrong move is refused and
-  never enters the line, and the answer appears after two slips or on request.
+- **Opening trainer** — 20 mainline openings, ten for each colour, each with a
+  **Learn** walkthrough and a **Train** drill. The walkthrough draws an arrow for
+  the next move, says plainly what it does, and steps or auto-plays through the
+  whole line; the drill then has you play your side from memory, refusing wrong
+  moves rather than letting them into the line. Openings you've seen default to
+  Train, ones you haven't default to Learn.
 - **Per-move review** — Brilliant / Best / Excellent / Good / Inaccuracy / Mistake / Blunder,
   how much you gave up in pawns, your accuracy for that move, and the engine's
   top candidate moves with evals and follow-up lines.
@@ -89,8 +92,10 @@ bot move selection.
 - **Post-game review** — eval graph over the whole game, a count of each move
   quality, and your biggest mistakes with the reason for each.
 - **Weakness report** — accuracy, pawns lost per move and blunder counts split
-  by opening / middlegame / endgame, which phase is costing you most, and which
-  piece you hang most often. Phase comes from the material left on the board,
+  by opening / middlegame / endgame, plus **what kind of tactic beats you**:
+  hanging pieces, forks, pins, back rank, allowed and missed mates, missed
+  material. Each theme is read off the board rather than guessed, so it never
+  names a motif that isn't there. Phase comes from the material left on the board,
   not the move number, so a queenless position is an endgame whenever it happens.
 - **Spaced repetition** — solved puzzles come back after 1, 3, 7, 15, 33 days and
   retire after two months; a miss resets them to ten minutes.
@@ -147,6 +152,7 @@ rather than being given a made-up one.
 | `test/book.test.js` | 24 tests |
 | `test/report.test.js` | 41 tests |
 | `test/bot.test.js` | 14 tests |
+| `test/themes.test.js` | 23 tests |
 | `manifest.webmanifest`, `icons/` | Add-to-Home-Screen metadata and icons |
 | `sw.js` | Service worker — offline precache |
 | `serve.py` | No-cache dev server |
@@ -196,9 +202,10 @@ author list are preserved in `pieces.svg`.
 
 - The book stops at ~10 plies, so long theoretical lines leave book early.
 - Puzzle difficulty isn't adaptive — every card uses the same 2-ply rewind.
-- The weakness report splits by phase but not by theme (pins, forks, back rank).
 - The opening trainer drills one mainline per opening, with no sidelines and no
   spaced repetition of its own.
+- Theme detection covers the common motifs but not discovered attacks, skewers
+  or deflections, which are harder to read off a single position reliably.
 - No cross-device sync. Export/import covers moving data by hand.
 - Bumping `VERSION` in `sw.js` is manual; forget it and returning visitors keep
   the old assets until the navigation request refreshes them.

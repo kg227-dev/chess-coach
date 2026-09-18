@@ -397,6 +397,7 @@ function weaknessReport(games) {
   var phases = { opening: emptyBucket(), middlegame: emptyBucket(), endgame: emptyBucket() };
   var total = emptyBucket();
   var hung = {};
+  var themes = {};
   var gamesWithData = 0;
 
   (games || []).forEach(function (g) {
@@ -414,10 +415,11 @@ function weaknessReport(games) {
         else if (m.cls === 'Inaccuracy') b.inaccuracies++;
       });
       if (m.hung) hung[m.hung] = (hung[m.hung] || 0) + 1;
+      (m.themes || []).forEach(function (t) { themes[t] = (themes[t] || 0) + 1; });
     });
   });
 
-  var out = { total: finishBucket(total), phases: {}, hung: hung, gamesWithData: gamesWithData };
+  var out = { total: finishBucket(total), phases: {}, hung: hung, themes: themes, gamesWithData: gamesWithData };
   Object.keys(phases).forEach(function (k) { out.phases[k] = finishBucket(phases[k]); });
 
   // Weakest phase, ignoring buckets too small to mean anything.
@@ -433,6 +435,12 @@ function weaknessReport(games) {
     if (worstPiece === null || hung[k] > hung[worstPiece]) worstPiece = k;
   });
   out.mostHungPiece = worstPiece;
+
+  var topTheme = null;
+  Object.keys(themes).forEach(function (k) {
+    if (topTheme === null || themes[k] > themes[topTheme]) topTheme = k;
+  });
+  out.topTheme = topTheme;
 
   return out;
 }
@@ -571,6 +579,154 @@ function chooseBotMove(pvs, level, rng) {
   return pool[pool.length - 1].uci;
 }
 
+/* ---------- tactical themes ---------- */
+
+var THEME_LABELS = {
+  hanging:     'Hanging pieces',
+  fork:        'Forks',
+  pin:         'Pins',
+  backRank:    'Back rank',
+  allowedMate: 'Allowed mate',
+  missedMate:  'Missed mate',
+  missedWin:   'Missed material',
+};
+
+/* Same position, other side to move. En passant is only meaningful for the
+   original mover, so it is dropped. */
+function withTurn(fen, color) {
+  var parts = String(fen || '').split(' ');
+  if (parts.length < 4) return null;
+  parts[1] = color;
+  parts[3] = '-';
+  return parts.join(' ');
+}
+
+/* Absolutely pinned: lift the piece and the king is left in check. */
+function isPinned(fen, square, color) {
+  try {
+    var c = new Chess(fen);
+    var piece = c.get(square);
+    if (!piece || piece.color !== color || piece.type === 'k') return false;
+    c.remove(square);
+    var probe = withTurn(c.fen(), color);
+    if (!probe) return false;
+    return new Chess(probe).in_check();
+  } catch (e) { return false; }
+}
+
+function pinnedSquares(fen, color) {
+  var out = [];
+  var c;
+  try { c = new Chess(fen); } catch (e) { return out; }
+  var files = 'abcdefgh';
+  for (var f = 0; f < 8; f++) {
+    for (var r = 1; r <= 8; r++) {
+      var sq = files[f] + r;
+      var p = c.get(sq);
+      if (p && p.color === color && p.type !== 'k' && isPinned(fen, sq, color)) out.push(sq);
+    }
+  }
+  return out;
+}
+
+/* What the piece standing on `square` would attack if it moved again. */
+function attackedValuablesFrom(fen, square, byColor) {
+  try {
+    var probe = withTurn(fen, byColor);
+    if (!probe) return [];
+    var c = new Chess(probe);
+    return c.moves({ square: square, verbose: true })
+      .filter(function (m) { return m.captured && (VALUE[m.captured] || 0) >= 3; })
+      .map(function (m) { return m.to; });
+  } catch (e) { return []; }
+}
+
+/* Name the tactic that actually beat you. Conservative on purpose: each theme
+   has to be readable off the board, so it never invents a motif. `mover` is the
+   colour that played the mistake. */
+function detectThemes(o) {
+  var themes = [];
+  var mover = o.mover === 'b' ? 'b' : 'w';
+  var opponent = mover === 'w' ? 'b' : 'w';
+  var cpLoss = o.cpLoss || 0;
+
+  if (o.cpAfterMine <= -MATE_CP) themes.push('allowedMate');
+  if (o.cpBefore >= MATE_CP && o.cpAfterMine < MATE_CP) themes.push('missedMate');
+
+  var refutation = o.playedLine && o.playedLine[1];
+  if (refutation && o.fenAfter && cpLoss >= 90) {
+    try {
+      var c = new Chess(o.fenAfter);
+      var r = applyUci(c, refutation);
+      if (r) {
+        if (r.captured) themes.push('hanging');
+
+        var fenAfterRefutation = c.fen();
+        var givesCheck = /[+#]$/.test(r.san);
+        var hits = attackedValuablesFrom(fenAfterRefutation, r.to, opponent);
+        if ((hits.length + (givesCheck ? 1 : 0)) >= 2) themes.push('fork');
+
+        var backRank = mover === 'w' ? '1' : '8';
+        if (givesCheck && (r.piece === 'r' || r.piece === 'q') && r.to[1] === backRank) {
+          themes.push('backRank');
+        }
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  // A pin you walked into: absent before the move, present after it.
+  if (o.fenBefore && o.fenAfter && cpLoss >= 90) {
+    var before = pinnedSquares(o.fenBefore, mover).length;
+    var after = pinnedSquares(o.fenAfter, mover).length;
+    if (after > before) themes.push('pin');
+  }
+
+  // Material that was there for the taking and you left it.
+  if (o.bestUci && o.fenBefore && cpLoss >= 90 && !o.playedCaptured) {
+    try {
+      var b = applyUci(new Chess(o.fenBefore), o.bestUci);
+      if (b && b.captured && (VALUE[b.captured] || 0) >= 3) themes.push('missedWin');
+    } catch (e) { /* ignore */ }
+  }
+
+  // Unique, stable order.
+  var seen = {}, out = [];
+  themes.forEach(function (t) { if (!seen[t]) { seen[t] = 1; out.push(t); } });
+  return out;
+}
+
+/* ---------- walkthrough helpers ---------- */
+
+function sanToUci(fen, san) {
+  try {
+    var c = new Chess(fen);
+    var m = c.move(san);
+    return m ? m.from + m.to + (m.promotion || '') : null;
+  } catch (e) { return null; }
+}
+
+/* A plain description of a move, read straight off the board — no judgement
+   about whether it is good, which would be inventing chess advice. */
+function describeMove(fen, san) {
+  try {
+    var c = new Chess(fen);
+    var m = c.move(san);
+    if (!m) return san;
+    var who = m.color === 'w' ? 'White' : 'Black';
+    if (m.flags.indexOf('k') !== -1) return who + ' castles kingside.';
+    if (m.flags.indexOf('q') !== -1) return who + ' castles queenside.';
+
+    var subject = m.piece === 'p' ? 'the pawn' : 'the ' + PIECE_NAME[m.piece];
+    var txt = who + ' plays ' + m.san + ' — ' + subject + ' to ' + m.to;
+    if (m.captured) txt += ', taking the ' + PIECE_NAME[m.captured];
+    if (m.flags.indexOf('e') !== -1) txt += ' en passant';
+    if (m.promotion) txt += ' and promoting to a ' + PIECE_NAME[m.promotion];
+    if (/#$/.test(m.san)) txt += ' — checkmate';
+    else if (/\+$/.test(m.san)) txt += ' — check';
+    return txt + '.';
+  } catch (e) { return san; }
+}
+
 /* ---------- clock ---------- */
 
 function fmtClock(ms) {
@@ -609,6 +765,13 @@ var API = {
   recordCurve: recordCurve,
   materialFromHistory: materialFromHistory,
   fmtClock: fmtClock,
+  sanToUci: sanToUci,
+  describeMove: describeMove,
+  THEME_LABELS: THEME_LABELS,
+  detectThemes: detectThemes,
+  isPinned: isPinned,
+  pinnedSquares: pinnedSquares,
+  withTurn: withTurn,
   BOT_LEVELS: BOT_LEVELS,
   botLevel: botLevel,
   chooseBotMove: chooseBotMove,
