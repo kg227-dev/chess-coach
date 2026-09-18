@@ -62,13 +62,21 @@ var CLASSES = {
   Blunder:    { key: 'Blunder',    color: 'var(--c-blunder)',    icon: '??' },
 };
 
-function classify(cpLoss, wasBest, brilliant) {
+/* Move quality is judged on how much winning chance the move threw away, not
+   on raw centipawns. The same 1.5 pawns is a catastrophe from an equal position
+   and irrelevant when you are already up a rook, and centipawns can't tell the
+   difference. Thresholds are win-percentage points, matching the convention
+   Lichess and chess.com use. */
+var QUALITY_THRESHOLDS = { excellent: 2, good: 10, inaccuracy: 20, mistake: 30 };
+
+function classify(winDrop, wasBest, brilliant) {
   if (brilliant) return CLASSES.Brilliant;
   if (wasBest) return CLASSES.Best;
-  if (cpLoss < 20) return CLASSES.Excellent;
-  if (cpLoss < 50) return CLASSES.Good;
-  if (cpLoss < 110) return CLASSES.Inaccuracy;
-  if (cpLoss < 270) return CLASSES.Mistake;
+  var d = Math.max(0, winDrop || 0);
+  if (d < QUALITY_THRESHOLDS.excellent) return CLASSES.Excellent;
+  if (d < QUALITY_THRESHOLDS.good) return CLASSES.Good;
+  if (d < QUALITY_THRESHOLDS.inaccuracy) return CLASSES.Inaccuracy;
+  if (d < QUALITY_THRESHOLDS.mistake) return CLASSES.Mistake;
   return CLASSES.Blunder;
 }
 
@@ -210,6 +218,9 @@ function scoreMove(opts) {
   }
 
   var cpLoss = wasBest ? 0 : Math.max(0, cpBefore - cpAfterMine);
+  var winBefore = winPct(cpBefore);
+  var winAfter = winPct(cpAfterMine);
+  var winDrop = wasBest ? 0 : Math.max(0, winBefore - winAfter);
 
   // Brilliant: the engine's own move, giving material away, and still fine after.
   var brilliant = false;
@@ -221,12 +232,13 @@ function scoreMove(opts) {
     cpBefore: cpBefore,
     cpAfterMine: cpAfterMine,
     cpLoss: cpLoss,
+    winDrop: winDrop,
     wasBest: wasBest,
     brilliant: brilliant,
     bestUci: bestUci,
     playedLine: playedLine,
-    cls: classify(cpLoss, wasBest, brilliant),
-    accuracy: moveAccuracy(winPct(cpBefore), winPct(cpAfterMine)),
+    cls: classify(winDrop, wasBest, brilliant),
+    accuracy: moveAccuracy(winBefore, winAfter),
   };
 }
 
@@ -727,6 +739,107 @@ function describeMove(fen, san) {
   } catch (e) { return san; }
 }
 
+/* ---------- think time ---------- */
+
+var TIME_BUCKETS = [
+  { key: 'snap',   label: 'Under 5s', max: 5000 },
+  { key: 'quick',  label: '5-15s',    max: 15000 },
+  { key: 'steady', label: '15-30s',   max: 30000 },
+  { key: 'long',   label: 'Over 30s', max: Infinity },
+];
+
+function bucketForMs(ms) {
+  for (var i = 0; i < TIME_BUCKETS.length; i++) {
+    if (ms < TIME_BUCKETS[i].max) return TIME_BUCKETS[i].key;
+  }
+  return TIME_BUCKETS[TIME_BUCKETS.length - 1].key;
+}
+
+/* How your accuracy varies with how long you thought. Only moves that recorded
+   a think time count, so games played before timing existed are ignored. */
+function timeReport(games) {
+  var acc = {};
+  TIME_BUCKETS.forEach(function (b) { acc[b.key] = { moves: 0, accSum: 0, blunders: 0, mistakes: 0 }; });
+  var timed = 0;
+
+  (games || []).forEach(function (g) {
+    ((g && g.breakdown) || []).forEach(function (m) {
+      if (!m || typeof m.acc !== 'number' || typeof m.ms !== 'number') return;
+      timed++;
+      var b = acc[bucketForMs(m.ms)];
+      b.moves++;
+      b.accSum += m.acc;
+      if (m.cls === 'Blunder') b.blunders++;
+      else if (m.cls === 'Mistake') b.mistakes++;
+    });
+  });
+
+  var buckets = TIME_BUCKETS.map(function (def) {
+    var b = acc[def.key];
+    return {
+      key: def.key,
+      label: def.label,
+      moves: b.moves,
+      accuracy: b.moves ? b.accSum / b.moves : null,
+      blunders: b.blunders,
+      errorRate: b.moves ? (b.blunders + b.mistakes) / b.moves : 0,
+    };
+  });
+
+  // Worth saying something only when both ends have enough moves to mean it.
+  var MIN = 5;
+  var fastest = null, slowest = null;
+  buckets.forEach(function (b) {
+    if (b.moves < MIN) return;
+    if (!fastest) fastest = b;
+    slowest = b;
+  });
+
+  var insight = null;
+  if (fastest && slowest && fastest.key !== slowest.key) {
+    var gap = slowest.accuracy - fastest.accuracy;
+    if (gap >= 8) {
+      insight = { gap: gap, fast: fastest.label, slow: slowest.label };
+    }
+  }
+
+  return { buckets: buckets, timedMoves: timed, insight: insight };
+}
+
+/* ---------- chess.com import ---------- */
+
+/* Which colour the named player had, or null if they weren't in the game. */
+function chessComSide(game, username) {
+  var u = String(username || '').trim().toLowerCase();
+  if (!u || !game) return null;
+  if (game.white && String(game.white.username || '').toLowerCase() === u) return 'w';
+  if (game.black && String(game.black.username || '').toLowerCase() === u) return 'b';
+  return null;
+}
+
+/* Standard chess only, newest first, capped. Variants and games the player
+   isn't in are dropped rather than half-analysed. */
+function importableGames(games, username, limit) {
+  var out = (games || []).filter(function (g) {
+    if (!g || !g.pgn) return false;
+    if (g.rules && g.rules !== 'chess') return false;
+    return chessComSide(g, username) !== null;
+  });
+  out.sort(function (a, b) { return (b.end_time || 0) - (a.end_time || 0); });
+  return out.slice(0, limit || 10);
+}
+
+/* The result from the named player's point of view. */
+function chessComResult(game, username) {
+  var side = chessComSide(game, username);
+  if (!side) return 'Unknown';
+  var me = side === 'w' ? game.white : game.black;
+  var them = side === 'w' ? game.black : game.white;
+  if (me && me.result === 'win') return 'Win';
+  if (them && them.result === 'win') return 'Loss';
+  return 'Draw';
+}
+
 /* ---------- clock ---------- */
 
 function fmtClock(ms) {
@@ -750,6 +863,7 @@ var API = {
   winPct: winPct,
   moveAccuracy: moveAccuracy,
   classify: classify,
+  QUALITY_THRESHOLDS: QUALITY_THRESHOLDS,
   CLASSES: CLASSES,
   fmtEval: fmtEval,
   sameMove: sameMove,
@@ -765,6 +879,12 @@ var API = {
   recordCurve: recordCurve,
   materialFromHistory: materialFromHistory,
   fmtClock: fmtClock,
+  TIME_BUCKETS: TIME_BUCKETS,
+  bucketForMs: bucketForMs,
+  timeReport: timeReport,
+  chessComSide: chessComSide,
+  importableGames: importableGames,
+  chessComResult: chessComResult,
   sanToUci: sanToUci,
   describeMove: describeMove,
   THEME_LABELS: THEME_LABELS,

@@ -46,6 +46,10 @@ const DEFAULTS = {
   showArrows: true, // draw arrows when the answer is revealed
   timeMin: 10,      // clock per side, 0 = unlimited
   retryCap: 3,      // take-backs before the answer is shown
+  blunderCheck: 'off',   // 'off' | 'blunders' | 'both'
+  ccUser: '',            // chess.com username
+  ccGames: 10,           // how many recent games to import
+  importDepth: 10,       // analysis depth for imports
 };
 
 const $ = (id) => document.getElementById(id);
@@ -150,6 +154,8 @@ const S = {
   retries: 0,
   retryAt: {},     // ply -> take-backs used
   revealed: {},    // ply -> answer has been shown
+  bcShown: {},     // ply -> blunder-check already offered
+  turnStartedAt: 0,
   lastMove: null,
   sel: null,
   legal: [],
@@ -527,6 +533,7 @@ async function newGame() {
   S.chess = new Chess();
   S.scored = {}; S.curve = []; S.retries = 0; S.retryAt = {}; S.revealed = {};
   S.lastMove = null; S.pre = null; S.preFen = null;
+  S.bcShown = {}; S.turnStartedAt = 0;
   S.resigned = false; S.flagged = null;
   S.playing = true; S.locked = true;
   clearSelection(); clearArrows();
@@ -551,6 +558,7 @@ async function beginUserTurn() {
   S.locked = false;
   clearArrows();
   setStatus('Your move.');
+  S.turnStartedAt = performance.now();
   Clock.start(S.me);
   const fen = S.chess.fen();
   S.preFen = fen;
@@ -571,6 +579,7 @@ async function playUserMove(move) {
   if (S.mode === 'puzzle') return playPuzzleMove(move);
   if (S.mode === 'opening') return playTrainerMove(move);
   const { from, to, promotion } = move;
+  const thinkMs = S.turnStartedAt ? Math.round(performance.now() - S.turnStartedAt) : null;
   const ply = S.chess.history().length;
   const fenBefore = S.chess.fen();
   const mv = S.chess.move({ from, to, promotion: promotion || 'q' });
@@ -637,6 +646,7 @@ async function playUserMove(move) {
       reason: why.problem || why.answer, fenBefore,
       bestSan: res.bestUci ? L.uciToSan(fenBefore, res.bestUci) : null,
       phase: L.phaseOf(fenBefore, ply),
+      ms: thinkMs,
       hung: why.hung || null,
       themes: L.detectThemes({
         mover: S.me, fenBefore, fenAfter,
@@ -654,6 +664,20 @@ async function playUserMove(move) {
   renderMoves();
   updateEvalBar(cpWhite);
 
+  const ctx = { mv, res, before, fenBefore, ply, why, over };
+
+  // A nudge to look again, before the full verdict and without naming what is
+  // wrong — the point is to build the habit of re-checking, not to hand it over.
+  const wantsCheck = CFG.blunderCheck !== 'off' && !over && !S.bcShown[ply]
+    && (res.cls.key === 'Blunder' || (CFG.blunderCheck === 'both' && res.cls.key === 'Mistake'));
+  if (wantsCheck) {
+    S.bcShown[ply] = true;
+    return showBlunderCheck(ctx);
+  }
+  return continueAfterScoring(ctx);
+}
+
+async function continueAfterScoring({ mv, res, before, fenBefore, ply, why, over }) {
   const shouldReview = S.reviewMode === 'every'
     || (S.reviewMode === 'mistakes' && ['Inaccuracy', 'Mistake', 'Blunder'].includes(res.cls.key));
 
@@ -664,6 +688,44 @@ async function playUserMove(move) {
     if (over) return endGame();
     await botMove();
   }
+}
+
+function showBlunderCheck(ctx) {
+  const { mv, res, before, ply } = ctx;
+  const el = $('review');
+  el.innerHTML = `
+    <div class="review-head">
+      <span class="badge" style="background:var(--c-mistake)">?</span>
+      <div>
+        <div class="review-title" style="color:var(--c-mistake)">Have another look</div>
+        <div class="review-sub">Something about <b>${mv.san}</b> gives material away. Look at the
+          position again before you commit to it.</div>
+      </div>
+    </div>
+    <div class="review-actions">
+      <button class="btn btn-primary" id="bcBack">↶ Take it back</button>
+      <button class="btn" id="bcPlay">Play it anyway</button>
+    </div>`;
+  el.hidden = false;
+  drawArrows([{ uci: mv.from + mv.to, color: 'var(--c-mistake)', width: 0.11, opacity: 0.8 }]);
+  setStatus('<b>Have another look</b> — that move looks like it costs you.');
+
+  $('bcBack').onclick = () => {
+    S.chess.undo();
+    S.retries++;
+    S.lastMove = null;
+    el.hidden = true;
+    clearArrows();
+    render(); renderMoves(); updateStats();
+    updateEvalBar(S.me === 'w' ? res.cpBefore : -res.cpBefore);
+    S.locked = false;
+    S.preFen = S.chess.fen();
+    S.pre = Promise.resolve(before);
+    S.turnStartedAt = performance.now();
+    Clock.start(S.me);
+    setStatus('Take your time — what does the opponent threaten?');
+  };
+  $('bcPlay').onclick = () => continueAfterScoring(ctx);
 }
 
 function showReview({ mv, res, before, fenBefore, ply, why }) {
@@ -807,7 +869,7 @@ function endGame() {
       retries: S.retries, skill: L.botLevel(S.botLevel).label, result: title,
       breakdown: Object.keys(S.scored).sort((a, b) => a - b).map((k) => {
         const r = S.scored[k];
-        return { phase: r.phase, cls: r.cls, acc: r.acc, cpLoss: r.cpLoss,
+        return { phase: r.phase, cls: r.cls, acc: r.acc, cpLoss: r.cpLoss, ms: r.ms,
                  hung: r.hung || null, themes: r.themes || [] };
       }),
     });
@@ -1619,6 +1681,7 @@ const SETTING_ROWS = [
   { key: 'depth', label: 'Analysis depth', type: 'select', opts: [[8, '8 — fast'], [10, '10'], [12, '12 — default'], [14, '14'], [16, '16 — slow, strict']], note: 'Higher is more accurate but slower per move.' },
   { key: 'botMs', label: 'Bot response delay', type: 'select', opts: [[0, 'Instant'], [200, '0.2s'], [450, '0.45s — default'], [1000, '1s']], note: 'How long the bot pauses before replying. Its strength is set by the Bot menu, not this.' },
   { key: 'retryCap', label: 'Take-backs before the answer', type: 'select', opts: [[1, '1'], [2, '2'], [3, '3 — default'], [5, '5'], [99, 'Never reveal']] },
+  { key: 'blunderCheck', label: 'Warn me before a blunder', type: 'select', opts: [['off', 'Off'], ['blunders', 'Blunders only'], ['both', 'Mistakes and blunders']], note: "A nudge to re-check, without saying what's wrong. Your accuracy still records the first move you played." },
   { key: 'showEval', label: 'Show eval bar during play', type: 'bool', note: 'Off makes you judge the position yourself.' },
   { key: 'showArrows', label: 'Show arrows on the board', type: 'bool' },
 ];
@@ -1656,7 +1719,8 @@ function renderSettings() {
   pane.querySelectorAll('[data-key]').forEach((input) => {
     input.onchange = () => {
       const k = input.dataset.key;
-      CFG[k] = input.type === 'checkbox' ? input.checked : Number(input.value);
+      const raw = input.type === 'checkbox' ? input.checked : input.value;
+      CFG[k] = (typeof raw === 'string' && raw !== '' && !isNaN(Number(raw))) ? Number(raw) : raw;
       saveSettings();
       if (k === 'showEval' || k === 'showArrows') { updateEvalBar(0); if (!CFG.showArrows) clearArrows(); }
       if (k === 'timeMin' && !S.playing) Clock.reset();

@@ -140,17 +140,31 @@ describe('classify', () => {
     assert.equal(L.classify(500, true).key, 'Best');
   });
 
-  test('threshold boundaries are exact', () => {
+  test('threshold boundaries are exact, in win-percentage points', () => {
     assert.equal(L.classify(0, false).key, 'Excellent');
-    assert.equal(L.classify(19, false).key, 'Excellent');
-    assert.equal(L.classify(20, false).key, 'Good');
-    assert.equal(L.classify(49, false).key, 'Good');
-    assert.equal(L.classify(50, false).key, 'Inaccuracy');
-    assert.equal(L.classify(109, false).key, 'Inaccuracy');
-    assert.equal(L.classify(110, false).key, 'Mistake');
-    assert.equal(L.classify(269, false).key, 'Mistake');
-    assert.equal(L.classify(270, false).key, 'Blunder');
-    assert.equal(L.classify(9999, false).key, 'Blunder');
+    assert.equal(L.classify(1.99, false).key, 'Excellent');
+    assert.equal(L.classify(2, false).key, 'Good');
+    assert.equal(L.classify(9.99, false).key, 'Good');
+    assert.equal(L.classify(10, false).key, 'Inaccuracy');
+    assert.equal(L.classify(19.99, false).key, 'Inaccuracy');
+    assert.equal(L.classify(20, false).key, 'Mistake');
+    assert.equal(L.classify(29.99, false).key, 'Mistake');
+    assert.equal(L.classify(30, false).key, 'Blunder');
+    assert.equal(L.classify(100, false).key, 'Blunder');
+  });
+
+  test('a negative or missing drop is treated as no loss', () => {
+    assert.equal(L.classify(-5, false).key, 'Excellent');
+    assert.equal(L.classify(undefined, false).key, 'Excellent');
+  });
+
+  test('the same centipawn loss is judged by what it actually costs', () => {
+    // 1.5 pawns thrown away from equal really hurts...
+    const fromEqual = L.winPct(0) - L.winPct(-150);
+    assert.equal(L.classify(fromEqual, false).key, 'Inaccuracy');
+    // ...but the same 1.5 pawns while already winning by a rook does not.
+    const whileWinning = L.winPct(800) - L.winPct(650);
+    assert.equal(L.classify(whileWinning, false).key, 'Good');
   });
 
   test('every class carries a colour and an icon', () => {
@@ -323,8 +337,9 @@ describe('scoreMove', () => {
 
   test('a bad move in the list is scored from the same search', () => {
     const r = L.scoreMove({ before, playedUci: 'f2f3' });
-    assert.equal(r.cpLoss, 100);
-    assert.equal(r.cls.key, 'Inaccuracy');
+    assert.equal(r.cpLoss, 100);              // still reported in pawns for display
+    assert.equal(r.cls.key, 'Good');          // but 9 win% from near-equal is not yet an error
+    assert.ok(r.winDrop > 8 && r.winDrop < 10);
     assert.deepEqual(r.playedLine, ['f2f3', 'e7e5']);
   });
 
@@ -334,7 +349,8 @@ describe('scoreMove', () => {
     // opponent is +300, so we are -300; we gave up 40 - (-300) = 340
     assert.equal(r.cpAfterMine, -300);
     assert.equal(r.cpLoss, 340);
-    assert.equal(r.cls.key, 'Blunder');
+    assert.equal(r.cls.key, 'Mistake');       // ~29 win% points from a near-equal start
+    assert.ok(r.winDrop > 25 && r.winDrop < 30);
     assert.deepEqual(r.playedLine, ['b1a3', 'e7e5', 'g1f3']);
   });
 
@@ -707,16 +723,30 @@ describe('end-to-end consistency', () => {
     assert.ok(b.cpLoss < c.cpLoss);
   });
 
-  test('classification agrees with the measured loss', () => {
+  test('classification tracks how much winning chance was thrown away', () => {
     const mk = (playedCp) => L.scoreMove({
       before: { bestmove: 'e2e4', pvs: { 1: { cp: 0, pv: ['e2e4'] }, 2: { cp: playedCp, pv: ['d2d4'] } } },
       playedUci: 'd2d4',
     });
     assert.equal(mk(-10).cls.key, 'Excellent');
-    assert.equal(mk(-30).cls.key, 'Good');
-    assert.equal(mk(-80).cls.key, 'Inaccuracy');
-    assert.equal(mk(-200).cls.key, 'Mistake');
-    assert.equal(mk(-400).cls.key, 'Blunder');
+    assert.equal(mk(-60).cls.key, 'Good');
+    assert.equal(mk(-150).cls.key, 'Inaccuracy');
+    assert.equal(mk(-300).cls.key, 'Mistake');
+    assert.equal(mk(-500).cls.key, 'Blunder');
+  });
+
+  test('severity never decreases as more is thrown away', () => {
+    const order = ['Excellent', 'Good', 'Inaccuracy', 'Mistake', 'Blunder'];
+    let prev = -1;
+    for (const cp of [-5, -40, -120, -250, -450, -900]) {
+      const r = L.scoreMove({
+        before: { bestmove: 'e2e4', pvs: { 1: { cp: 0, pv: ['e2e4'] }, 2: { cp, pv: ['d2d4'] } } },
+        playedUci: 'd2d4',
+      });
+      const rank = order.indexOf(r.cls.key);
+      assert.ok(rank >= prev, `${cp}cp went backwards to ${r.cls.key}`);
+      prev = rank;
+    }
   });
 
   test('a real game scores every one of its moves', () => {
