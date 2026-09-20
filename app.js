@@ -530,7 +530,7 @@ async function newGame() {
   S.botLevel = $('botLevel').value;
   S.reviewMode = $('reviewMode').value;
 
-  stopLessonAuto();
+  stopLessonTimer();
   S.mode = 'game'; S.puzzle = null; S.trainer = null; S.lesson = null; S.opening = null;
   S.chess = new Chess();
   S.scored = {}; S.curve = []; S.retries = 0; S.retryAt = {}; S.revealed = {};
@@ -609,7 +609,7 @@ async function playUserMove(move) {
     updateStats();
     renderMoves();
     $('review').hidden = true;
-    setStatus(`<b>Book</b>${S.opening ? ' — ' + S.opening : ''}`);
+    setStatus(`<b>Book</b>${S.opening ? ': ' + S.opening : ''}`);
     if (S.chess.game_over()) return endGame();
     return botMove();
   }
@@ -713,7 +713,7 @@ function showBlunderCheck(ctx) {
     </div>`;
   el.hidden = false;
   drawArrows([{ uci: mv.from + mv.to, color: 'var(--c-mistake)', width: 0.11, opacity: 0.8 }]);
-  setStatus('<b>Have another look</b> — that move looks like it costs you.');
+  setStatus('<b>Have another look</b>. That move looks like it costs you.');
 
   $('bcBack').onclick = () => {
     S.chess.undo();
@@ -728,7 +728,7 @@ function showBlunderCheck(ctx) {
     S.pre = Promise.resolve(before);
     S.turnStartedAt = performance.now();
     Clock.start(S.me);
-    setStatus('Take your time — what does the opponent threaten?');
+    setStatus('Take your time. What does the opponent threaten?');
   };
   $('bcPlay').onclick = () => continueAfterScoring(ctx);
 }
@@ -747,7 +747,7 @@ function showReview({ mv, res, before, fenBefore, ply, why }) {
          <li><span class="mv">${idx === 0 ? '★ ' : ''}${L.uciToSan(fenBefore, info.pv[0])}</span>
              <span class="ev">${L.fmtEval(L.infoToCp(info), true)}</span>
              <span class="ln">${L.pvToSan(fenBefore, info.pv, 5)}</span></li>`).join('')}</ol>`
-    : `<div class="hidden-answer">Answer hidden — try to find it yourself.
+    : `<div class="hidden-answer">Answer hidden. Try to find it yourself.
          ${CFG.retryCap - tries} ${CFG.retryCap - tries === 1 ? 'try' : 'tries'} left before it's shown.</div>`;
 
   const canRetry = res.cls.key !== 'Best' && res.cls.key !== 'Brilliant';
@@ -776,7 +776,7 @@ function showReview({ mv, res, before, fenBefore, ply, why }) {
        { uci: bestUci, color: '#26c2a3', width: 0.14, opacity: 0.95 }]
     : [{ uci: mv.from + mv.to, color: res.cls.color, width: 0.11, opacity: 0.85 }]);
 
-  setStatus(`<b>${res.cls.key}</b> — ${canRetry ? 'take it back and try again, or continue.' : 'nicely done.'}`);
+  setStatus(`<b>${res.cls.key}</b>. ${canRetry ? 'Take it back and try again, or continue.' : 'Nicely done.'}`);
 
   const btnShow = $('btnShow');
   if (btnShow) btnShow.onclick = () => {
@@ -801,8 +801,8 @@ function showReview({ mv, res, before, fenBefore, ply, why }) {
     S.pre = Promise.resolve(before);
     Clock.start(S.me);
     setStatus(S.revealed[ply]
-      ? "Try again — the teal arrow is the engine's pick."
-      : `Try again — ${CFG.retryCap - S.retryAt[ply]} more before the answer shows.`);
+      ? "Try again. The teal arrow is the engine's pick."
+      : `Try again. ${CFG.retryCap - S.retryAt[ply]} more before the answer shows.`);
   };
 
   $('btnContinue').onclick = async () => {
@@ -853,7 +853,7 @@ function endGame() {
   if (S.flagged) {
     const iFlagged = S.flagged === S.me;
     title = iFlagged ? 'Time out' : 'Bot flagged';
-    sub = iFlagged ? 'Your clock ran out.' : "The bot's clock ran out — you win on time.";
+    sub = iFlagged ? 'Your clock ran out.' : "The bot's clock ran out. You win on time.";
   }
   else if (S.resigned) { title = 'Resigned'; sub = 'You ended the game early.'; }
   else if (S.chess.in_checkmate()) {
@@ -861,7 +861,7 @@ function endGame() {
     title = youWon ? 'You win!' : 'Checkmate';
     sub = youWon ? 'You delivered mate.' : 'The bot mated you.';
   }
-  else if (S.chess.in_stalemate()) { title = 'Stalemate'; sub = 'Draw — no legal moves.'; }
+  else if (S.chess.in_stalemate()) { title = 'Stalemate'; sub = 'Draw. No legal moves.'; }
   else if (S.chess.in_threefold_repetition()) { title = 'Draw'; sub = 'Threefold repetition.'; }
   else if (S.chess.insufficient_material()) { title = 'Draw'; sub = 'Insufficient material.'; }
   else if (S.chess.in_draw()) { title = 'Draw'; sub = '50-move rule.'; }
@@ -890,7 +890,7 @@ function endGame() {
     <button class="btn btn-primary" id="goNew">New game</button>`;
   go.hidden = false;
   $('goNew').onclick = newGame;
-  setStatus(`<b>${title}</b>${overall === null ? '' : ` — ${overall.toFixed(1)}% accuracy this game.`}`);
+  setStatus(`<b>${title}</b>${overall === null ? '' : `. ${overall.toFixed(1)}% accuracy this game.`}`);
 }
 
 /* ==========================================================================
@@ -908,7 +908,7 @@ function updateStats() {
   const recs = Object.values(S.scored);
   const graded = recs.filter((r) => typeof r.acc === 'number');
   const avg = L.gameAccuracy(recs);
-  $('accNow').textContent = avg === null ? '—' : avg.toFixed(1) + '%';
+  $('accNow').textContent = avg === null ? '-' : avg.toFixed(1) + '%';
   $('moveCount').textContent = graded.length;
   $('retryCount').textContent = S.retries;
 }
@@ -972,7 +972,7 @@ function renderPostGame() {
     <div class="chips">${chips}</div>
     ${worst.length
       ? `<div class="best-label">Biggest mistakes</div><ol class="best-list">${rows}</ol>`
-      : '<div class="reason">No inaccuracies — clean game.</div>'}`;
+      : '<div class="reason">No inaccuracies. Clean game.</div>'}`;
   el.hidden = false;
 
   el.querySelectorAll('[data-ply]').forEach((li) => {
@@ -1018,14 +1018,14 @@ function showMistake(ply) {
       </div>
     </div>
     ${rec.reason ? `<div class="reason">${rec.reason}</div>` : ''}
-    <div class="hidden-answer">Your move in red, the engine's in teal — this is the position before you moved.</div>
+    <div class="hidden-answer">Your move in red, the engine's in teal. This is the position before you moved.</div>
     <div class="review-actions">
       ${at > 0 ? '<button class="btn" id="mPrev">← Previous</button>' : ''}
       ${at >= 0 && at < list.length - 1 ? '<button class="btn" id="mNext">Next →</button>' : ''}
       <button class="btn btn-primary" id="mBack">Back to review</button>
     </div>`;
   $('review').hidden = false;
-  setStatus(`<b>Move ${moveNo}</b> — the position before <b>${rec.san}</b>.`);
+  setStatus(`<b>Move ${moveNo}</b>: the position before <b>${rec.san}</b>.`);
 
   const prev = $('mPrev');
   if (prev) prev.onclick = () => showMistake(list[at - 1]);
@@ -1129,7 +1129,7 @@ async function startGeneratedPuzzle(cat) {
   const start = L.puzzleStartPosition(puz);
   if (!start) return;
 
-  stopLessonAuto();
+  stopLessonTimer();
   S.mode = 'puzzle';
   S.puzzle = { kind: 'generated', puz, start, idx: 0, cat, wrong: null, hinted: false, tries: 0 };
   S.chess = L.loadFen(start.fen);
@@ -1184,7 +1184,7 @@ function renderGeneratedPrompt(message, kind) {
   $('gpShow').onclick = () => revealGenerated();
   $('gpSkip').onclick = () => { recordGenerated(false); startGeneratedPuzzle(cat); };
   $('gpExit').onclick = () => exitPuzzles();
-  setStatus(`<b>${catLabel(cat)}</b> — ${side} to play.`);
+  setStatus(`<b>${catLabel(cat)}</b>: ${side} to play.`);
 }
 
 function exitPuzzles() {
@@ -1239,7 +1239,7 @@ async function playGeneratedMove({ from, to, promotion }) {
     S.puzzle.tries++;
     recordStreakBreak();
     renderGeneratedPrompt(`<b>${san}</b> isn't it. Look again.`);
-    setStatus('<b>Not that one</b> — try again.');
+    setStatus('<b>Not that one</b>. Try again.');
     return;
   }
 
@@ -1259,7 +1259,7 @@ async function playGeneratedMove({ from, to, promotion }) {
 
   // Their forced reply.
   S.locked = true;
-  renderGeneratedPrompt('Good — keep going.', 'answer');
+  renderGeneratedPrompt('Good, keep going.', 'answer');
   setTimeout(() => {
     if (!S.puzzle || S.puzzle.kind !== 'generated') return;
     const replyUci = start.solution[S.puzzle.idx];
@@ -1316,7 +1316,7 @@ function finishGenerated(solved) {
   $('gpAgain').onclick = () => startGeneratedPuzzle(cat);
   $('gpNext').onclick = () => startGeneratedPuzzle(cat);
   $('gpExit').onclick = () => exitPuzzles();
-  setStatus(hinted ? '<b>Solved</b> — with a hint.' : clean ? '<b>Solved</b> first try.' : '<b>Solved</b>.');
+  setStatus(hinted ? '<b>Solved</b>, with a hint.' : clean ? '<b>Solved</b> first try.' : '<b>Solved</b>.');
   renderPuzzles();
 }
 
@@ -1325,7 +1325,7 @@ function startPuzzle(rec) {
   const board = L.loadFen(fen);
   if (!board) return;
 
-  stopLessonAuto();
+  stopLessonTimer();
   S.mode = 'puzzle';
   S.puzzle = { rec, fen, attempts: 0, revealed: false };
   S.chess = board;
@@ -1373,7 +1373,7 @@ function renderPuzzlePrompt(message, kind) {
   $('pzShow').onclick = () => revealPuzzle();
   $('pzSkip').onclick = () => goToNextPuzzle();
   $('pzExit').onclick = () => { S.mode = 'game'; S.puzzle = null; $('review').hidden = true; clearArrows(); newGame(); };
-  setStatus(`<b>Puzzle</b> — ${side} to play.`);
+  setStatus(`<b>Puzzle</b>: ${side} to play.`);
 }
 
 function bestUciForPuzzle() {
@@ -1447,7 +1447,7 @@ async function playPuzzleMove({ from, to, promotion }) {
     render(); renderMoves();
     S.locked = false;
     renderPuzzlePrompt(`<b>${mv.san}</b> still gives something up. Have another look.`);
-    setStatus('<b>Not that one</b> — try again.');
+    setStatus('<b>Not that one</b>. Try again.');
     return;
   }
   return showPuzzleSolved(mv, res);
@@ -1494,7 +1494,7 @@ function showPuzzleSolved(mv, res) {
   ]);
 
   const when = !sched ? null
-    : sched.retired ? 'Retired — you have this one.'
+    : sched.retired ? 'Retired. You have this one.'
     : `You'll see it again in ${sched.interval >= 1
         ? sched.interval + ' day' + (sched.interval === 1 ? '' : 's')
         : '10 minutes'}.`;
@@ -1519,7 +1519,7 @@ function showPuzzleSolved(mv, res) {
   const nx = $('pzNext');
   if (nx) nx.onclick = () => goToNextPuzzle();
   $('pzExit').onclick = () => { S.mode = 'game'; S.puzzle = null; $('review').hidden = true; clearArrows(); newGame(); };
-  setStatus(`<b>Solved</b> — ${mv.san}.${n ? ' Another one is waiting.' : ''}`);
+  setStatus(`<b>Solved</b>: ${mv.san}.${n ? ' Another one is waiting.' : ''}`);
   renderPuzzles();
 }
 
@@ -1556,7 +1556,7 @@ async function renderPuzzles() {
     <button class="btn btn-primary" id="gpRandom" style="width:100%;margin-bottom:12px">Random puzzle</button>
     <p class="ptitle">By theme</p>
     <div class="catgrid">${chips}</div>
-    ${db ? '' : '<div class="empty">Puzzle set unavailable — check your connection.</div>'}
+    ${db ? '' : '<div class="empty">Puzzle set unavailable. Check your connection.</div>'}
     <p class="ptitle" style="margin-top:16px">From your own games</p>
     ${mine.length ? `
       <div class="gamerow">
@@ -1566,7 +1566,7 @@ async function renderPuzzles() {
         </div>
         <button class="btn" id="mineStart">${dueMine.length ? 'Solve' : 'Review'}</button>
       </div>` :
-      '<div class="empty">Nothing yet — your own mistakes are saved here as you play, or import your chess.com games from Settings.</div>'}`;
+      '<div class="empty">Nothing yet. Your own mistakes are saved here as you play, or import your chess.com games from Settings.</div>'}`;
 
   const rnd = $('gpRandom');
   if (rnd) rnd.onclick = () => startGeneratedPuzzle('all');
@@ -1595,17 +1595,16 @@ function saveOpeningStats(stats) {
    Walkthrough — see the line played before you have to recall it
    ========================================================================== */
 
-const LESSON_PACE = 1500;
 const REPLY_PAUSE = 750;
 
-function stopLessonAuto() {
+function stopLessonTimer() {
   if (S.lesson && S.lesson.timer) { clearTimeout(S.lesson.timer); S.lesson.timer = null; }
 }
 
 function startLesson(line) {
-  stopLessonAuto();
+  stopLessonTimer();
   S.mode = 'learn';
-  S.lesson = { line, idx: 0, auto: false, timer: null, wrong: null };
+  S.lesson = { line, idx: 0, timer: null, wrong: null };
   S.chess = new Chess();
   S.me = line.side;
   S.flip = line.side === 'b';
@@ -1625,7 +1624,7 @@ function startLesson(line) {
 
 /* Hand the board over when it is your move, play the reply yourself otherwise. */
 function lessonAdvance() {
-  stopLessonAuto();
+  stopLessonTimer();
   if (!S.lesson) return;
   const { line, idx } = S.lesson;
   if (idx >= line.moves.length) { S.locked = true; renderLesson(); return; }
@@ -1636,11 +1635,10 @@ function lessonAdvance() {
   if (isUser) {
     S.locked = false;                       // your turn: make the move yourself
     renderLesson();
-    if (S.lesson.auto) S.lesson.timer = setTimeout(lessonPlayExpected, LESSON_PACE);
   } else {
     S.locked = true;
     renderLesson();
-    S.lesson.timer = setTimeout(lessonPlayExpected, S.lesson.auto ? LESSON_PACE : REPLY_PAUSE);
+    S.lesson.timer = setTimeout(lessonPlayExpected, REPLY_PAUSE);
   }
 }
 
@@ -1690,7 +1688,7 @@ function playLessonMove({ from, to, promotion }) {
 }
 
 function lessonRewindTo(idx) {
-  stopLessonAuto();
+  stopLessonTimer();
   const { line } = S.lesson;
   S.chess = new Chess();
   for (let i = 0; i < idx; i++) S.chess.move(line.moves[i]);
@@ -1702,7 +1700,7 @@ function lessonRewindTo(idx) {
 }
 
 function renderLesson() {
-  const { line, idx, auto, wrong } = S.lesson;
+  const { line, idx, wrong } = S.lesson;
   const total = line.moves.length;
   const done = idx >= total;
   const nextSan = done ? null : line.moves[idx];
@@ -1732,41 +1730,34 @@ function renderLesson() {
     </div>
     ${line.idea ? `<div class="reason">${line.idea}</div>` : ''}
     <div class="trainbar"><i style="width:${Math.round((idx / total) * 100)}%"></i></div>
-    ${wrong ? `<div class="reason bad-move"><b>${wrong}</b> isn't the move — follow the arrow.</div>` : ''}
+    ${wrong ? `<div class="reason bad-move"><b>${wrong}</b> isn't the move. Follow the arrow.</div>` : ''}
     <div class="lessonstep${done ? ' finished' : ''}">
       ${done ? '' : `<span class="who">${yours ? 'Play this move yourself' : 'Their reply'}</span>`}
       ${caption}
     </div>
     <div class="review-actions">
       ${idx > 0 ? '<button class="btn" id="lsBack">← Back</button>' : ''}
-      ${done ? '' : `<button class="btn" id="lsAuto">${auto ? 'Pause' : 'Watch it'}</button>`}
       ${done || !yours ? '' : '<button class="btn" id="lsSkip">Skip</button>'}
       <button class="btn btn-primary" id="lsTrain">${done ? 'Practice it from memory' : 'Skip to practice'}</button>
     </div>`;
   $('review').hidden = false;
 
   const back = $('lsBack');
-  if (back) back.onclick = () => { S.lesson.auto = false; lessonRewindTo(Math.max(0, idx - 1)); };
+  if (back) back.onclick = () => lessonRewindTo(Math.max(0, idx - 1));
   const skip = $('lsSkip');
-  if (skip) skip.onclick = () => { S.lesson.auto = false; lessonPlayExpected(); };
-  const autoBtn = $('lsAuto');
-  if (autoBtn) autoBtn.onclick = () => {
-    S.lesson.auto = !S.lesson.auto;
-    if (S.lesson.auto) { renderLesson(); S.lesson.timer = setTimeout(lessonPlayExpected, 400); }
-    else { stopLessonAuto(); renderLesson(); }
-  };
+  if (skip) skip.onclick = () => lessonPlayExpected();
   $('lsTrain').onclick = () => {
-    stopLessonAuto();
+    stopLessonTimer();
     markOpeningSeen(line.name);
     S.lesson = null;
     startTrainer(line);
   };
 
   setStatus(done
-    ? `<b>${line.name}</b> — tutorial complete.`
+    ? `<b>${line.name}</b>: tutorial complete.`
     : yours
-      ? `<b>${line.name}</b> — play the move the arrow shows.`
-      : `<b>${line.name}</b> — watch the reply.`);
+      ? `<b>${line.name}</b>: play the move the arrow shows.`
+      : `<b>${line.name}</b>: watch the reply.`);
 }
 
 function markOpeningSeen(name) {
@@ -1778,7 +1769,7 @@ function markOpeningSeen(name) {
 }
 
 function startTrainer(line) {
-  stopLessonAuto();
+  stopLessonTimer();
   markOpeningSeen(line.name);
   S.mode = 'opening';
   S.trainer = { line, idx: 0, misses: 0, totalMisses: 0, revealed: false, wrong: null };
@@ -1879,7 +1870,6 @@ function renderTrainerCard() {
     ${!t.isUser && !t.done ? '<div class="hidden-answer">Opponent is replying…</div>' : ''}
     <div class="review-actions">
       ${t.isUser && !revealed ? '<button class="btn" id="trShow">Show me this move</button>' : ''}
-      <button class="btn" id="trTutorial">↺ Tutorial</button>
       <button class="btn" id="trRestart">Restart</button>
       <button class="btn btn-primary" id="trExit">Exit</button>
     </div>`;
@@ -1887,13 +1877,12 @@ function renderTrainerCard() {
 
   const show = $('trShow');
   if (show) show.onclick = () => { S.trainer.revealed = true; renderTrainerCard(); };
-  $('trTutorial').onclick = () => { S.trainer = null; startLesson(line); };
   $('trRestart').onclick = () => startTrainer(line);
   $('trExit').onclick = () => { S.mode = 'game'; S.trainer = null; el.hidden = true; newGame(); };
 
   setStatus(t.isUser
-    ? `<b>${line.name}</b> — your move from memory.`
-    : `<b>${line.name}</b> — watching the reply.`);
+    ? `<b>${line.name}</b>: your move from memory.`
+    : `<b>${line.name}</b>: watching the reply.`);
 }
 
 function finishTrainer() {
@@ -1926,7 +1915,7 @@ function finishTrainer() {
   $('review').hidden = false;
   $('trAgain').onclick = () => startTrainer(line);
   $('trDone').onclick = () => { S.mode = 'game'; S.trainer = null; $('review').hidden = true; newGame(); };
-  setStatus(`<b>Line complete</b> — ${line.name}.`);
+  setStatus(`<b>Line complete</b>: ${line.name}.`);
   renderOpenings();
 }
 
@@ -2066,7 +2055,7 @@ function applyImport(text) {
   try {
     data = JSON.parse(text);
   } catch (e) {
-    throw new Error("That file isn't valid JSON — pick the .json file Export produced.");
+    throw new Error("That file isn't valid JSON. Pick the .json file Export produced.");
   }
   L.validateExport(data);                  // throws with a readable reason
   const merged = L.mergeData(currentData(), data);
@@ -2076,7 +2065,7 @@ function applyImport(text) {
     Object.assign(CFG, merged.settings);
     saveSettings();
   } catch (e) {
-    throw new Error('Could not save — browser storage is full or disabled.');
+    throw new Error('Could not save. Browser storage is full or disabled.');
   }
   return merged;
 }
@@ -2236,7 +2225,7 @@ async function runImport() {
       if (known.has((g.end_time || 0) * 1000)) continue;      // already imported
       importNote(`Analysing game ${i + 1} of ${games.length}…`);
       const record = await analyseImportedGame(g, username, (ply, total) => {
-        importNote(`Analysing game ${i + 1} of ${games.length} — move ${Math.ceil((ply + 1) / 2)} of ${Math.ceil(total / 2)}…`);
+        importNote(`Analysing game ${i + 1} of ${games.length}, move ${Math.ceil((ply + 1) / 2)} of ${Math.ceil(total / 2)}…`);
       });
       if (record) {
         const all = loadGames();
@@ -2250,7 +2239,7 @@ async function runImport() {
     }
     importNote(importCancelled
       ? `Stopped. ${added} game${added === 1 ? '' : 's'} imported.`
-      : `Done — ${added} game${added === 1 ? '' : 's'} analysed and added to your history.`, 'ok');
+      : `Done. ${added} game${added === 1 ? '' : 's'} analysed and added to your history.`, 'ok');
   } catch (err) {
     importNote(err.message, 'bad');
   } finally {
@@ -2296,9 +2285,9 @@ function renderProgress() {
 
 const SETTING_ROWS = [
   { key: 'timeMin', label: 'Clock per side', type: 'select', opts: [[0, 'Unlimited'], [3, '3 min'], [5, '5 min'], [10, '10 min'], [30, '30 min']], note: 'Applies from the next new game.' },
-  { key: 'depth', label: 'Analysis depth', type: 'select', opts: [[8, '8 — fast'], [10, '10'], [12, '12 — default'], [14, '14'], [16, '16 — slow, strict']], note: 'Higher is more accurate but slower per move.' },
-  { key: 'botMs', label: 'Bot response delay', type: 'select', opts: [[0, 'Instant'], [200, '0.2s'], [450, '0.45s — default'], [1000, '1s']], note: 'How long the bot pauses before replying. Its strength is set by the Bot menu, not this.' },
-  { key: 'retryCap', label: 'Take-backs before the answer', type: 'select', opts: [[1, '1'], [2, '2'], [3, '3 — default'], [5, '5'], [99, 'Never reveal']] },
+  { key: 'depth', label: 'Analysis depth', type: 'select', opts: [[8, '8 (fast)'], [10, '10'], [12, '12 (default)'], [14, '14'], [16, '16 (slow, strict)']], note: 'Higher is more accurate but slower per move.' },
+  { key: 'botMs', label: 'Bot response delay', type: 'select', opts: [[0, 'Instant'], [200, '0.2s'], [450, '0.45s (default)'], [1000, '1s']], note: 'How long the bot pauses before replying. Its strength is set by the Bot menu, not this.' },
+  { key: 'retryCap', label: 'Take-backs before the answer', type: 'select', opts: [[1, '1'], [2, '2'], [3, '3 (default)'], [5, '5'], [99, 'Never reveal']] },
   { key: 'blunderCheck', label: 'Warn me before a blunder', type: 'select', opts: [['off', 'Off'], ['blunders', 'Blunders only'], ['both', 'Mistakes and blunders']], note: "A nudge to re-check, without saying what's wrong. Your accuracy still records the first move you played." },
   { key: 'showEval', label: 'Show eval bar during play', type: 'bool', note: 'Off makes you judge the position yourself.' },
   { key: 'showArrows', label: 'Show arrows on the board', type: 'bool' },
@@ -2336,7 +2325,7 @@ function renderSettings() {
     <div class="setrow">
       <div class="setlabel">Import depth<span class="setnote">Lower is faster and slightly less strict.</span></div>
       <select data-key="importDepth">${[8, 10, 12].map((n) =>
-        `<option value="${n}" ${CFG.importDepth === n ? 'selected' : ''}>${n}${n === 10 ? ' — default' : ''}</option>`).join('')}</select>
+        `<option value="${n}" ${CFG.importDepth === n ? 'selected' : ''}>${n}${n === 10 ? ' (default)' : ''}</option>`).join('')}</select>
     </div>
     <div class="setrow">
       <div class="setlabel">Run the import<span class="setnote" id="ccNote"></span></div>
@@ -2346,7 +2335,7 @@ function renderSettings() {
       </span>
     </div>
     <p class="ptitle" style="margin-top:16px">Backup</p>
-    <p class="setnote" style="margin:0 0 8px">Everything lives in this browser only — a different device, or clearing
+    <p class="setnote" style="margin:0 0 8px">Everything lives in this browser only. A different device, or clearing
        site data, starts from scratch. Export to move your history or keep a copy.</p>
     <div class="setrow">
       <div class="setlabel">Export everything<span class="setnote">Games, puzzles and settings as one JSON file.</span></div>
@@ -2397,7 +2386,7 @@ function renderSettings() {
       renderPuzzles();
       renderSettings();                 // rebuilds the pane, so write the note after
       const fresh = $('backupNote');
-      fresh.textContent = `Merged — now ${merged.games.length} games and ${merged.puzzles.length} puzzles `
+      fresh.textContent = `Merged. Now ${merged.games.length} games and ${merged.puzzles.length} puzzles `
         + `(${merged.addedGames} and ${merged.addedPuzzles} new).`;
       fresh.className = 'setnote ok';
     } catch (err) {

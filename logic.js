@@ -755,12 +755,12 @@ function describeMove(fen, san) {
     if (m.flags.indexOf('q') !== -1) return who + ' castles queenside.';
 
     var subject = m.piece === 'p' ? 'the pawn' : 'the ' + PIECE_NAME[m.piece];
-    var txt = who + ' plays ' + m.san + ' — ' + subject + ' to ' + m.to;
+    var txt = who + ' plays ' + m.san + ', ' + subject + ' to ' + m.to;
     if (m.captured) txt += ', taking the ' + PIECE_NAME[m.captured];
     if (m.flags.indexOf('e') !== -1) txt += ' en passant';
     if (m.promotion) txt += ' and promoting to a ' + PIECE_NAME[m.promotion];
-    if (/#$/.test(m.san)) txt += ' — checkmate';
-    else if (/\+$/.test(m.san)) txt += ' — check';
+    if (/#$/.test(m.san)) txt += ', checkmate';
+    else if (/\+$/.test(m.san)) txt += ', check';
     return txt + '.';
   } catch (e) { return san; }
 }
