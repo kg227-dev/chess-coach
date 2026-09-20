@@ -604,8 +604,12 @@ async function playUserMove(move) {
   const sansSoFar = S.chess.history();
   S.opening = (BOOK && BOOK.openingName(sansSoFar)) || S.opening;
   if (BOOK && BOOK.isBook(sansSoFar)) {
-    S.scored[ply] = { acc: null, cls: 'Book', san: mv.san, cpLoss: 0, reason: '', fenBefore, bestSan: null,
-      phase: L.phaseOf(fenBefore, ply), hung: null };
+    // Only if this ply has no verdict yet. Taking a move back and replaying it
+    // into book must not erase the mistake you actually made.
+    if (S.scored[ply] === undefined) {
+      S.scored[ply] = { acc: null, cls: 'Book', san: mv.san, cpLoss: 0, reason: '', fenBefore, bestSan: null,
+        phase: L.phaseOf(fenBefore, ply), hung: null, ms: thinkMs };
+    }
     updateStats();
     renderMoves();
     $('review').hidden = true;
@@ -781,7 +785,24 @@ function showReview({ mv, res, before, fenBefore, ply, why }) {
   const btnShow = $('btnShow');
   if (btnShow) btnShow.onclick = () => {
     S.revealed[ply] = true;
-    showReview({ mv, res, before, fenBefore, ply, why });
+    // Nothing to play, so fall back to simply printing the lines.
+    if (!bestUci) return showReview({ mv, res, before, fenBefore, ply, why });
+
+    // Seeing the move and playing it are the same request. Take yours back and
+    // let the engine make its own, which scores it and draws the card again.
+    // S.scored[ply] is already set, so your original move stays on your record.
+    S.retries++;
+    S.retryAt[ply] = (S.retryAt[ply] || 0) + 1;
+    S.chess.undo();
+    S.lastMove = null;
+    el.hidden = true;
+    clearArrows();
+    render(); renderMoves(); updateStats();
+    S.preFen = S.chess.fen();
+    S.pre = Promise.resolve(before);
+    S.turnStartedAt = null;          // the engine chose it, so it is not your think time
+    S.locked = true;
+    playUserMove({ from: bestUci.slice(0, 2), to: bestUci.slice(2, 4), promotion: bestUci.slice(4) || undefined });
   };
 
   const btnRetry = $('btnRetry');
@@ -873,6 +894,7 @@ function endGame() {
     saveGame({
       date: Date.now(), accuracy: +overall.toFixed(1), moves: recs.length,
       retries: S.retries, skill: L.botLevel(S.botLevel).label, result: title,
+      baseMs: CFG.timeMin ? CFG.timeMin * 60000 : null,
       breakdown: Object.keys(S.scored).sort((a, b) => a - b).map((k) => {
         const r = S.scored[k];
         return { phase: r.phase, cls: r.cls, acc: r.acc, cpLoss: r.cpLoss, ms: r.ms,
@@ -2027,6 +2049,51 @@ function weaknessHTML() {
     <p class="wfoot">From ${rep.gamesWithData} game${rep.gamesWithData === 1 ? '' : 's'} with move-by-move data · ${rep.total.moves} graded moves.</p>`;
 }
 
+
+/* Accuracy against how long you thought. Bands are a share of each game's
+   clock, so an imported bullet game and a thirty-minute one can sit in the
+   same table without the fast one dragging every move into "snap". */
+function timeHTML() {
+  const rep = L.timeReport(loadGames());
+  if (!rep.timedMoves) {
+    return '<p class="ptitle" style="margin-top:14px">How long you think</p>'
+      + '<div class="empty">Play a game, or import your chess.com games from Settings, and your accuracy by thinking time appears here.</div>';
+  }
+
+  // Only bands with enough moves to mean something can be called your weakest.
+  const solid = rep.buckets.filter((b) => b.moves >= 5);
+  const worst = solid.length
+    ? solid.reduce((a, b) => (b.accuracy < a.accuracy ? b : a))
+    : null;
+
+  const rows = rep.buckets.map((b) => {
+    if (!b.moves) {
+      return `<div class="wrow"><span class="wlabel">${b.label}</span><span class="wnone">no moves yet</span></div>`;
+    }
+    const weak = worst && b.key === worst.key;
+    return `<div class="wrow${weak ? ' weak' : ''}">
+      <div class="wtop">
+        <span class="wlabel">${b.label}${weak ? '<em>weakest</em>' : ''}</span>
+        <span class="wval">${b.accuracy.toFixed(0)}%</span>
+      </div>
+      <span class="wbar"><i style="width:${Math.max(2, Math.min(100, b.accuracy))}%"></i></span>
+      <span class="wsub">${b.moves} move${b.moves === 1 ? '' : 's'} · ${(b.avgMs / 1000).toFixed(1)}s on average · ${
+        b.blunders} blunder${b.blunders === 1 ? '' : 's'}</span>
+    </div>`;
+  }).join('');
+
+  const verdict = rep.insight
+    ? `You are <b>${rep.insight.gap.toFixed(0)} points</b> more accurate on your <b>${
+        rep.insight.slow.toLowerCase()}</b> moves than your <b>${rep.insight.fast.toLowerCase()}</b> ones.`
+    : 'No clear gap between your quick moves and your slow ones yet.';
+
+  return `<p class="ptitle" style="margin-top:14px">How long you think</p>
+    <div class="reason">${verdict}</div>
+    ${rows}
+    <p class="wfoot">From ${rep.timedMoves} timed move${rep.timedMoves === 1 ? '' : 's'}. Each band is a share of that
+       game's own clock, so a bullet game and a long one are judged on the same terms.</p>`;
+}
+
 /* ==========================================================================
    Backup — export / import
    ========================================================================== */
@@ -2115,6 +2182,10 @@ async function analyseImportedGame(game, username, onMove) {
   const board = new Chess();
   const breakdown = [];
   const depth = CFG.importDepth;
+  // chess.com annotates every move with the clock, so how long you took is
+  // recoverable even though we never watched the game.
+  const thinks = L.thinkTimesFromPgn(game.pgn);
+  const tc = L.timeControlOf(game.pgn);
 
   for (let ply = 0; ply < sans.length; ply++) {
     if (importCancelled) return null;
@@ -2127,7 +2198,7 @@ async function analyseImportedGame(game, username, onMove) {
     if (!mv) break;
 
     if (BOOK && BOOK.isBook(sansSoFar)) {
-      breakdown.push({ phase: L.phaseOf(fenBefore, ply), cls: 'Book', acc: null, cpLoss: 0, ms: null, hung: null, themes: [] });
+      breakdown.push({ phase: L.phaseOf(fenBefore, ply), cls: 'Book', acc: null, cpLoss: 0, ms: thinks[ply] || null, hung: null, themes: [] });
       onMove && onMove(ply, sans.length);
       continue;
     }
@@ -2155,7 +2226,7 @@ async function analyseImportedGame(game, username, onMove) {
     });
     breakdown.push({
       phase: L.phaseOf(fenBefore, ply), cls: res.cls.key, acc: res.accuracy,
-      cpLoss: res.cpLoss, ms: null, hung: why.hung || null,
+      cpLoss: res.cpLoss, ms: thinks[ply] || null, hung: why.hung || null,
       themes: L.detectThemes({
         mover: side, fenBefore, fenAfter, playedLine: res.playedLine, bestUci: res.bestUci,
         cpLoss: res.cpLoss, cpBefore: res.cpBefore, cpAfterMine: res.cpAfterMine,
@@ -2191,6 +2262,7 @@ async function analyseImportedGame(game, username, onMove) {
     moves: graded.length,
     retries: 0,
     skill: `chess.com · ${game.time_class || 'game'}`,
+    baseMs: tc ? tc.baseMs : null,
     result: L.chessComResult(game, username),
     source: 'chess.com',
     url: game.url || null,
@@ -2278,6 +2350,7 @@ function renderProgress() {
       <div class="accbox"><span class="acclabel">Games</span><span class="accvalue small">${games.length}</span></div>
     </div>
     ${weaknessHTML()}
+    ${timeHTML()}
     <p class="ptitle" style="margin-top:14px">History</p>${rows}`;
 }
 

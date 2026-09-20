@@ -64,11 +64,10 @@ tactical themes, backup merging and bot move selection.
 - **Opening trainer** — 20 mainline openings, ten for each colour, each with a
   **Tutorial** and a **Practice** mode. In the tutorial you play the moves
   yourself following an arrow, so the line goes into your hands and not just
-  your eyes; the opponent replies automatically, and **Watch it** plays the
-  whole line through if you'd rather just see it first. Practice then has you play your side from memory, refusing wrong moves
-  rather than letting them into the line, with the answer after two slips or on
-  request. Openings you've seen default to Practice, ones you haven't default to
-  Tutorial, and you can jump back to the tutorial from inside practice.
+  your eyes, and the opponent replies automatically. Practice then has you play
+  your side from memory, refusing wrong moves rather than letting them into the
+  line, with the answer after two slips or on request. Openings you've seen
+  default to Practice, ones you haven't default to Tutorial.
 - **Per-move review** — Brilliant / Best / Excellent / Good / Inaccuracy / Mistake / Blunder,
   how much you gave up in pawns, your accuracy for that move, and the engine's
   top candidate moves with evals and follow-up lines.
@@ -77,8 +76,10 @@ tactical themes, backup merging and bot move selection.
   mate with Qh5".
 - **The answer stays hidden.** The card tells you *what went wrong* ("bxa6 takes
   your bishop") but not what to play. You get 3 take-backs to find it yourself
-  before the engine's choice is revealed — or press **Show best** to give up.
-  Retries are counted but never change your score.
+  before the engine's choice is revealed, or press **Show best** to give up,
+  which takes your move back and plays the engine's choice for you. Retries are
+  counted but never change your score, and the move you originally played is
+  the one that stays on your record.
 - **Brilliant (`!!`)** for a best move that gives up material and still holds —
   a real sacrifice, not a trade or a protected poke.
 - **Opening theory isn't graded.** While the game follows a known line the move
@@ -98,7 +99,12 @@ tactical themes, backup merging and bot move selection.
 - **Post-game review** — eval graph over the whole game, a count of each move
   quality, and your biggest mistakes with the reason for each.
 - **Think-time analysis** — accuracy split by how long you spent, so you can see
-  whether your errors come from moving too fast.
+  whether your errors come from moving too fast. Bands are a share of each
+  game's own clock rather than a fixed number of seconds, so an imported bullet
+  game and a 30-minute one are judged on the same terms: three seconds is a
+  snap decision in rapid and a long think in bullet. Imported chess.com games
+  get their timings from the `[%clk]` tags in the PGN, so real games under real
+  pressure count too.
 - **Blunder-check** (optional) — a nudge to look again before a losing move,
   without saying what's wrong. Your accuracy still records the move you played.
 - **Weakness report** — accuracy, pawns lost per move and blunder counts split

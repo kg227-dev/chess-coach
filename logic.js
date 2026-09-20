@@ -767,34 +767,112 @@ function describeMove(fen, san) {
 
 /* ---------- think time ---------- */
 
+/* Bands are a share of the clock you started with, not a fixed number of
+   seconds, because three seconds is a snap decision in a rapid game and a long
+   think in bullet. Pooling raw seconds across time controls would make "you
+   blunder when you move fast" true by construction.
+
+   The divisors are the old fixed thresholds expressed against ten minutes:
+   5s, 15s and 30s are exactly a 120th, a 40th and a 20th of it. */
+var REFERENCE_BASE_MS = 600000;
+
 var TIME_BUCKETS = [
-  { key: 'snap',   label: 'Under 5s', max: 5000 },
-  { key: 'quick',  label: '5-15s',    max: 15000 },
-  { key: 'steady', label: '15-30s',   max: 30000 },
-  { key: 'long',   label: 'Over 30s', max: Infinity },
+  { key: 'snap',   label: 'Snap',   div: 120 },
+  { key: 'quick',  label: 'Quick',  div: 40 },
+  { key: 'steady', label: 'Steady', div: 20 },
+  { key: 'long',   label: 'Long',   div: 0 },   // everything slower than the rest
 ];
 
-function bucketForMs(ms) {
+function bucketForMs(ms, baseMs) {
+  var base = baseMs > 0 ? baseMs : REFERENCE_BASE_MS;
   for (var i = 0; i < TIME_BUCKETS.length; i++) {
-    if (ms < TIME_BUCKETS[i].max) return TIME_BUCKETS[i].key;
+    var limit = TIME_BUCKETS[i].div ? base / TIME_BUCKETS[i].div : Infinity;
+    if (ms < limit) return TIME_BUCKETS[i].key;
   }
   return TIME_BUCKETS[TIME_BUCKETS.length - 1].key;
+}
+
+/* Past this, the gap between two clock readings is a disconnect or one of
+   chess.com's own corrections, not somebody thinking. */
+var MAX_THINK_MS = 3600000;
+
+/* The [TimeControl] tag in milliseconds. "600" and "180+2" are playable games;
+   "1/259200" is three days a move, whose think times are not comparable to
+   anything here, so it reads as no clock at all. */
+function timeControlOf(pgn) {
+  var m = /\[TimeControl\s+"([^"]*)"\]/.exec(String(pgn || ''));
+  if (!m) return null;
+  var tc = m[1].trim();
+  if (!/^\d+(\+\d+)?$/.test(tc)) return null;
+  var parts = tc.split('+');
+  var base = parseInt(parts[0], 10);
+  if (!base) return null;
+  return { baseMs: base * 1000, incMs: (parseInt(parts[1], 10) || 0) * 1000 };
+}
+
+/* "0:09:57.1" as milliseconds remaining. */
+function clockToMs(txt) {
+  var m = /^(\d+):(\d+):(\d+(?:\.\d+)?)$/.exec(String(txt).trim());
+  if (!m) return null;
+  return Math.round(((+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(m[3])) * 1000);
+}
+
+/* A move token, or a comment. Move numbers, results and annotation glyphs all
+   start with a character this deliberately does not accept. */
+var PGN_TOKEN_RE = /\{([^}]*)\}|([OKQRBNa-h][^\s{}]*)/g;
+
+/* One think time per ply, from the [%clk] comments chess.com writes after each
+   move, or null for a ply we cannot account for. Think time is the drop since
+   that player's previous reading, plus the increment they were just given.
+
+   Per-ply nulls rather than giving up on the whole game mean a partly
+   annotated PGN still contributes the moves it can explain. */
+function thinkTimesFromPgn(pgn) {
+  var tc = timeControlOf(pgn);
+  var text = String(pgn || '').replace(/^\s*\[.*\]\s*$/gm, '');
+
+  var clocks = [];
+  var m;
+  PGN_TOKEN_RE.lastIndex = 0;
+  while ((m = PGN_TOKEN_RE.exec(text)) !== null) {
+    if (m[2] !== undefined) {
+      clocks.push(null);                       // a move, its clock still unknown
+    } else if (clocks.length) {
+      var c = /\[%clk\s+([^\]]+)\]/.exec(m[1]);
+      if (c) clocks[clocks.length - 1] = clockToMs(c[1]);
+    }
+  }
+
+  var prev = [tc ? tc.baseMs : null, tc ? tc.baseMs : null];
+  var inc = tc ? tc.incMs : 0;
+
+  return clocks.map(function (cur, ply) {
+    var side = ply % 2;
+    if (cur === null) { prev[side] = null; return null; }
+    var before = prev[side];
+    prev[side] = cur;
+    if (before === null) return null;          // nothing to measure against
+    var think = before - cur + inc;
+    return (think < 0 || think > MAX_THINK_MS) ? null : think;
+  });
 }
 
 /* How your accuracy varies with how long you thought. Only moves that recorded
    a think time count, so games played before timing existed are ignored. */
 function timeReport(games) {
   var acc = {};
-  TIME_BUCKETS.forEach(function (b) { acc[b.key] = { moves: 0, accSum: 0, blunders: 0, mistakes: 0 }; });
+  TIME_BUCKETS.forEach(function (b) { acc[b.key] = { moves: 0, accSum: 0, msSum: 0, blunders: 0, mistakes: 0 }; });
   var timed = 0;
 
   (games || []).forEach(function (g) {
+    var base = (g && g.baseMs > 0) ? g.baseMs : REFERENCE_BASE_MS;
     ((g && g.breakdown) || []).forEach(function (m) {
       if (!m || typeof m.acc !== 'number' || typeof m.ms !== 'number') return;
       timed++;
-      var b = acc[bucketForMs(m.ms)];
+      var b = acc[bucketForMs(m.ms, base)];
       b.moves++;
       b.accSum += m.acc;
+      b.msSum += m.ms;
       if (m.cls === 'Blunder') b.blunders++;
       else if (m.cls === 'Mistake') b.mistakes++;
     });
@@ -807,6 +885,7 @@ function timeReport(games) {
       label: def.label,
       moves: b.moves,
       accuracy: b.moves ? b.accSum / b.moves : null,
+      avgMs: b.moves ? Math.round(b.msSum / b.moves) : null,
       blunders: b.blunders,
       errorRate: b.moves ? (b.blunders + b.mistakes) / b.moves : 0,
     };
@@ -972,7 +1051,10 @@ var API = {
   pickPuzzle: pickPuzzle,
   nextPuzzleRating: nextPuzzleRating,
   TIME_BUCKETS: TIME_BUCKETS,
+  REFERENCE_BASE_MS: REFERENCE_BASE_MS,
   bucketForMs: bucketForMs,
+  timeControlOf: timeControlOf,
+  thinkTimesFromPgn: thinkTimesFromPgn,
   timeReport: timeReport,
   chessComSide: chessComSide,
   importableGames: importableGames,

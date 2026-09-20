@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const L = require('../logic.js');
 
 describe('bucketForMs', () => {
-  test('sorts think times into the right band', () => {
+  test('defaults to the ten-minute reference, matching the old fixed bands', () => {
     assert.equal(L.bucketForMs(0), 'snap');
     assert.equal(L.bucketForMs(4999), 'snap');
     assert.equal(L.bucketForMs(5000), 'quick');
@@ -12,6 +12,32 @@ describe('bucketForMs', () => {
     assert.equal(L.bucketForMs(29999), 'steady');
     assert.equal(L.bucketForMs(30000), 'long');
     assert.equal(L.bucketForMs(600000), 'long');
+  });
+
+  test('an explicit ten-minute base is the same as the default', () => {
+    assert.equal(L.bucketForMs(4999, 600000), 'snap');
+    assert.equal(L.bucketForMs(5000, 600000), 'quick');
+    assert.equal(L.bucketForMs(30000, 600000), 'long');
+  });
+
+  test('scales to the clock, so bullet is judged against bullet', () => {
+    // One minute: the same three seconds that is a snap decision in rapid is
+    // a long think here.
+    assert.equal(L.bucketForMs(3000, 60000), 'long');
+    assert.equal(L.bucketForMs(2999, 60000), 'steady');
+    assert.equal(L.bucketForMs(499, 60000), 'snap');
+  });
+
+  test('scales the other way for a long clock', () => {
+    // Thirty minutes: three seconds is barely a glance.
+    assert.equal(L.bucketForMs(3000, 1800000), 'snap');
+    assert.equal(L.bucketForMs(90000, 1800000), 'long');
+  });
+
+  test('falls back to the reference when the base is missing or nonsense', () => {
+    assert.equal(L.bucketForMs(4999, 0), 'snap');
+    assert.equal(L.bucketForMs(4999, null), 'snap');
+    assert.equal(L.bucketForMs(4999, -5), 'snap');
   });
 });
 
@@ -44,8 +70,8 @@ describe('timeReport', () => {
     const r = L.timeReport([{ breakdown: rows }]);
     assert.ok(r.insight, 'should report an insight');
     assert.ok(r.insight.gap > 40);
-    assert.equal(r.insight.fast, 'Under 5s');
-    assert.equal(r.insight.slow, 'Over 30s');
+    assert.equal(r.insight.fast, 'Snap');
+    assert.equal(r.insight.slow, 'Long');
   });
 
   test('stays quiet when the gap is small', () => {
@@ -64,6 +90,30 @@ describe('timeReport', () => {
     const r = L.timeReport([{ breakdown: [mk(1000, 10, 'Blunder'), mk(1500, 20, 'Blunder'), mk(40000, 95)] }]);
     assert.equal(r.buckets.find((b) => b.key === 'snap').blunders, 2);
     assert.equal(r.buckets.find((b) => b.key === 'long').blunders, 0);
+  });
+
+  test('judges each game against its own clock', () => {
+    // Six seconds in a one-minute game is a long think; the same six seconds
+    // in a thirty-minute game is a snap decision.
+    const bullet = { baseMs: 60000, breakdown: [mk(6000, 30)] };
+    const slow = { baseMs: 1800000, breakdown: [mk(6000, 95)] };
+    const r = L.timeReport([bullet, slow]);
+    assert.equal(r.buckets.find((b) => b.key === 'long').moves, 1);
+    assert.equal(r.buckets.find((b) => b.key === 'long').accuracy, 30);
+    assert.equal(r.buckets.find((b) => b.key === 'snap').moves, 1);
+    assert.equal(r.buckets.find((b) => b.key === 'snap').accuracy, 95);
+  });
+
+  test('reports what each band meant in real seconds', () => {
+    const r = L.timeReport([{ breakdown: [mk(1000, 40), mk(3000, 50)] }]);
+    assert.equal(r.buckets.find((b) => b.key === 'snap').avgMs, 2000);
+    assert.equal(r.buckets.find((b) => b.key === 'long').avgMs, null);
+  });
+
+  test('games saved before baseMs existed use the reference clock', () => {
+    const r = L.timeReport([{ breakdown: [mk(4999, 40), mk(30000, 90)] }]);
+    assert.equal(r.buckets.find((b) => b.key === 'snap').moves, 1);
+    assert.equal(r.buckets.find((b) => b.key === 'long').moves, 1);
   });
 
   test('empty input gives empty bands, not a crash', () => {
